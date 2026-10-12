@@ -13,14 +13,30 @@ export const HOOK_EVENTS = [
 export function buildSettings(
   scriptPath: string,
   nodeCommand = 'node'
-): { hooks: Record<string, unknown> } {
+): { hooks: Record<string, unknown>; permissions: { defaultMode: 'acceptEdits'; allow: string[]; ask: string[] } } {
   // 훅 명령은 셸이 해석하므로 역슬래시 대신 슬래시 경로를 쓴다.
   const script = scriptPath.replace(/\\/g, '/')
   const hooks: Record<string, unknown> = {}
   for (const ev of HOOK_EVENTS) {
     hooks[ev] = [{ hooks: [{ type: 'command', command: `${nodeCommand} "${script}" ${ev}` }] }]
   }
-  return { hooks }
+  // Bash and PowerShell use the same command-prefix rule syntax.
+  const rulesFor = (commands: string[]): string[] =>
+    ['Bash', 'PowerShell'].flatMap(tool => commands.map(command => `${tool}(${command}:*)`))
+  return {
+    hooks,
+    permissions: {
+      defaultMode: 'acceptEdits',
+      allow: rulesFor([
+        'bash scripts/gpt.sh', 'node', 'npm', 'npx',
+        'git status', 'git diff', 'git log', 'git add'
+      ]),
+      ask: [
+        ...rulesFor(['git push', 'git reset --hard', 'rm -rf', 'git clean']),
+        'PowerShell(Remove-Item:*)'
+      ]
+    }
+  }
 }
 
 export function installHooks(dir: string): {

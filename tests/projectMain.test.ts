@@ -1,5 +1,5 @@
 import { afterAll, expect, it, vi } from 'vitest'
-import { existsSync, mkdtempSync, readFileSync, rmSync, mkdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, mkdirSync, writeFileSync, renameSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { IPC, type AddProjectResult } from '../src/shared/types'
@@ -9,7 +9,7 @@ const state = vi.hoisted(() => ({
   ready: undefined as undefined | (() => Promise<void>), userData: '', documents: '',
   handlers: new Map<string, (...args: any[]) => any>(), lifecycle: new Map<string, (() => void)[]>(),
   masterChanged: undefined as undefined | ((event: string, file: string | null) => void), masterClose: vi.fn(),
-  spawn: vi.fn((_file: string, _args: string[], _options: unknown) => ({ onData() {}, onExit() {}, write() {}, resize() {}, kill() {} })),
+  spawn: vi.fn((_file: string, _args: string[], _options: unknown) => ({ onData() {}, onExit: vi.fn((_cb: (event: { exitCode: number }) => void) => {}), write() {}, resize() {}, kill() {} })),
   dialog: vi.fn(), open: vi.fn(async () => ''), send: vi.fn(), owner: {} as object
 }))
 vi.mock('electron', () => ({
@@ -140,6 +140,33 @@ it('creates, unlinks and cleans planning references when the planning project is
   expect(existsSync(file)).toBe(false)
   expect(call(IPC.listProjects).find((p: { id: string }) => p.id === dev.id).linkedPlanningId).toBeUndefined()
   expect(() => call(IPC.setLinkedPlanning, dev.id, dev.id)).toThrow()
+})
+it('adds only an existing linked planning folder to development terminal args', () => {
+  const dev = call(IPC.createProject, 'permission-dev').project
+  const planning = call(IPC.createProject, 'permission-plan', 'planning').project
+  let previousExit: ((event: { exitCode: number }) => void) | undefined
+  const startArgs = (id: string): string[] => {
+    previousExit?.({ exitCode: 0 })
+    expect(call(IPC.startTerminal, id, 80, 24).ok).toBe(true)
+    previousExit = state.spawn.mock.results.at(-1)!.value.onExit.mock.calls[0][0]
+    return state.spawn.mock.calls.at(-1)![1]
+  }
+  expect(startArgs(dev.id)).not.toContain('--add-dir')
+  call(IPC.setLinkedPlanning, dev.id, planning.id)
+  const args = startArgs(dev.id)
+  expect(args.slice(args.indexOf('--add-dir'))).toEqual(['--add-dir', planning.path])
+  expect(startArgs(planning.id)).not.toContain('--add-dir')
+  renameSync(planning.path, planning.path + '-moved')
+  try {
+    expect(startArgs(dev.id)).not.toContain('--add-dir')
+    writeFileSync(planning.path, 'not a folder')
+    expect(startArgs(dev.id)).not.toContain('--add-dir')
+  } finally {
+    if (existsSync(planning.path)) rmSync(planning.path)
+    renameSync(planning.path + '-moved', planning.path)
+  }
+  call(IPC.setLinkedPlanning, dev.id, null)
+  expect(startArgs(dev.id)).not.toContain('--add-dir')
 })
 it('rejects invalid kinds before creating folders or opening the add dialog', async () => {
   for (const kind of ['other', '', null, {}, 1]) {

@@ -12,6 +12,22 @@ beforeEach(() => {
 afterEach(() => rmSync(dir, { recursive: true, force: true }))
 
 describe('buildSettings', () => {
+  it('adds scoped edit and command permissions while preserving hooks', () => {
+    const settings = buildSettings('/data/yal-hook.cjs')
+    expect(settings).toMatchObject({ permissions: { defaultMode: 'acceptEdits' } })
+    const permissions = (settings as unknown as { permissions: { allow: string[]; ask: string[] } }).permissions
+    for (const tool of ['Bash', 'PowerShell']) {
+      expect(permissions.allow).toEqual(expect.arrayContaining([
+        'bash scripts/gpt.sh', 'node', 'npm', 'npx', 'git status', 'git diff', 'git log', 'git add'
+      ].map(command => `${tool}(${command}:*)`)))
+      expect(permissions.ask).toEqual(expect.arrayContaining([
+        'git push', 'git reset --hard', 'rm -rf', 'git clean'
+      ].map(command => `${tool}(${command}:*)`)))
+    }
+    expect(Object.keys(settings.hooks).sort()).toEqual([...HOOK_EVENTS].sort())
+    expect(JSON.stringify(settings)).not.toContain(['bypass', 'Permissions'].join(''))
+    expect(JSON.stringify(settings)).not.toContain(['--dangerously', 'skip-permissions'].join('-'))
+  })
   it('registers one command hook per event with forward-slash script path', () => {
     const s = buildSettings('C:\\Users\\me\\data\\yal-hook.cjs') as {
       hooks: Record<string, { hooks: { type: string; command: string }[] }[]>
@@ -31,6 +47,7 @@ describe('installHooks', () => {
     const b = installHooks(dir)
     expect(b).toEqual(a)
     const settings = JSON.parse(readFileSync(a.settingsPath, 'utf8'))
+    expect(settings).toEqual(buildSettings(a.scriptPath))
     expect(JSON.stringify(settings)).toContain(a.scriptPath.replace(/\\/g, '/'))
   })
 

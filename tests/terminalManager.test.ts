@@ -54,6 +54,20 @@ function setup(over: Partial<TerminalDeps> = {}) {
 }
 
 describe('TerminalManager', () => {
+  it.each(['linux', 'win32'] as const)('adds per-project args alongside settings and continue on %s', platform => {
+    const seen: string[] = []
+    const { mgr, spawned } = setup({
+      platform, hasSession: () => true,
+      extraArgs: ['--settings', '/data/settings.json'],
+      argsFor: id => { seen.push(id); return ['--add-dir', '/planning folder'] }
+    })
+    mgr.start('p1', '/work/a')
+    expect(seen).toEqual(['p1'])
+    expect(spawned[0].args).toEqual([
+      ...(platform === 'win32' ? ['/c', 'claude'] : []),
+      '--settings', '/data/settings.json', '--continue', '--add-dir', '/planning folder'
+    ])
+  })
   it('starts plain `claude` in the project folder when there is no session', () => {
     const { mgr, spawned } = setup()
     mgr.start('p1', '/work/a')

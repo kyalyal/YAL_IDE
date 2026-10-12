@@ -386,6 +386,17 @@ app.whenReady().then(async () => {
       hasSession: (p) => hasClaudeSession(p),
       pathExists: existsSync,
       extraArgs: nodeStatus.installed ? ['--settings', hooks.settingsPath] : [],
+      argsFor: (id) => {
+        const project = registry.get(id)
+        if (project?.kind !== 'dev' || !project.linkedPlanningId) return []
+        const planning = registry.get(project.linkedPlanningId)
+        if (planning?.kind !== 'planning') return []
+        try {
+          return statSync(planning.path).isDirectory() ? ['--add-dir', planning.path] : []
+        } catch {
+          return []
+        }
+      },
       envFor: (id) => {
         const space = registry.list().find(project => project.id === id)?.kind ?? 'dev'
         return { YAL_PROJECT_ID: id, YAL_STATUS_DIR: hooks.statusDir, YAL_GPT_LOG: gptLogs.path(id), YAL_SKILLS_DIR: skills.stores[space].rootDir, YAL_SPACE: space, YAL_SKILL_TOOL: skills.toolPath }

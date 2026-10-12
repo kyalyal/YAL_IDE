@@ -20,6 +20,8 @@ export interface TerminalDeps {
   maxBuffer?: number
   /** `claude` 인자 맨 앞에 붙는 값 (예: ['--settings', settingsPath]) */
   extraArgs?: string[]
+  /** Additional Claude arguments for the current project. */
+  argsFor?(id: string): string[]
   /** pty 환경변수에 추가할 값 (예: 프로젝트 id, 상태 폴더) */
   envFor?(id: string): Record<string, string>
 }
@@ -58,7 +60,8 @@ export class TerminalManager {
 
     const claudeArgs = [
       ...(this.deps.extraArgs ?? []),
-      ...(this.deps.hasSession(path) ? ['--continue'] : [])
+      ...(this.deps.hasSession(path) ? ['--continue'] : []),
+      ...(this.deps.argsFor?.(id) ?? [])
     ]
     const isWin = (this.deps.platform ?? process.platform) === 'win32'
     const file = isWin ? 'cmd.exe' : 'claude'
