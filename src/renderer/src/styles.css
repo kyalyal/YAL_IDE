@@ -14,6 +14,17 @@ body { background: var(--bg); color: var(--fg); font: 13px "Segoe UI", system-ui
 .app { display: flex; height: 100%; }
 .sidebar { width: 260px; background: var(--bg-side); display: flex; flex-direction: column; border-right: 1px solid #333; }
 .sidebar-header { display: flex; justify-content: space-between; align-items: center; padding: 10px 12px; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--fg-dim); }
+.project-spaces { flex: 1; min-height: 0; display: grid; grid-template-rows: minmax(64px, 2fr) minmax(64px, 3fr); overflow: hidden; }
+.project-space { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+.project-space.dev { border-top: 1px solid #444; }
+.project-space > .sidebar-header { flex-shrink: 0; }
+.project-space-scroll { flex: 1; min-height: 0; overflow-y: auto; }
+.project-space .project-list { overflow: visible; }
+.project-identity { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.planning-link, .planning-link-name { max-width: 100%; font: inherit; font-size: 11px; }
+.planning-link { color-scheme: dark; color: var(--fg); background: #292929; border: 1px solid #505050; border-radius: 3px; padding: 2px; }
+.planning-link:focus-visible { outline: 2px solid #3794cb; }
+.planning-link-name { color: var(--fg-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .icon-btn { background: none; border: none; color: var(--fg); font-size: 16px; cursor: pointer; padding: 0 6px; border-radius: 3px; }
 .icon-btn:hover { background: var(--bg-select); }
 .empty-hint { padding: 16px 12px; color: var(--fg-dim); line-height: 1.6; }

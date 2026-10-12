@@ -1,7 +1,7 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, lstatSync, appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import type { ProvisionResult } from '../shared/types'
-import { claudeMd, GPT_SH, PREVIOUS_GPT_SH } from './templates'
+import type { ProjectKind, ProvisionResult } from '../shared/types'
+import { claudeMd, MASTER_IMPORT_LINE, GPT_SH, PREVIOUS_GPT_SH } from './templates'
 
 interface Target {
   rel: string
@@ -32,22 +32,37 @@ export function upgradeGptScript(projectPath: string): ProvisionResult {
   return result
 }
 
-export function provision(projectPath: string, projectName: string): ProvisionResult {
+export function provision(projectPath: string, projectName: string, kind: ProjectKind = 'dev'): ProvisionResult {
   const result: ProvisionResult = { created: [], skipped: [], errors: [] }
   const targets: Target[] = [
-    { rel: 'CLAUDE.md', content: claudeMd(projectName), mode: 0o644 },
+    { rel: 'CLAUDE.md', content: claudeMd(projectName, kind), mode: 0o644 },
     { rel: 'scripts/gpt.sh', content: GPT_SH, mode: 0o755 }
   ]
 
   for (const t of targets) {
     const abs = join(projectPath, ...t.rel.split('/'))
     try {
-      if (existsSync(abs)) {
+      // lstat also detects dangling symbolic links.
+      let existing: ReturnType<typeof lstatSync> | undefined
+      try { existing = lstatSync(abs) } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+      }
+      if (existing?.isSymbolicLink()) throw new Error('Refusing symbolic project file')
+      if (existing) {
+        if (t.rel === 'CLAUDE.md') {
+          const original = readFileSync(abs, 'utf8')
+          if (!original.split(/\r?\n/).some(line => line.trim() === MASTER_IMPORT_LINE)) {
+            const newline = original.includes('\r\n') ? '\r\n' : '\n'
+            appendFileSync(abs, (original && !original.endsWith('\n') ? newline : '') + MASTER_IMPORT_LINE + newline, 'utf8')
+            ;(result.upgraded ??= []).push(t.rel)
+            continue
+          }
+        }
         if (t.rel === 'scripts/gpt.sh') {
           const upgrade = upgradeGptScript(projectPath)
           result.skipped.push(...upgrade.skipped)
           result.errors.push(...upgrade.errors)
-          if (upgrade.upgraded) result.upgraded = upgrade.upgraded
+          if (upgrade.upgraded) result.upgraded = [...(result.upgraded ?? []), ...upgrade.upgraded]
           if (upgrade.skipReasons) result.skipReasons = upgrade.skipReasons
           continue
         }

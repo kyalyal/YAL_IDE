@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs'
 import { basename, dirname, resolve } from 'node:path'
-import type { ProjectRecord, ProjectView } from '../shared/types'
+import type { ProjectKind, ProjectRecord, ProjectView } from '../shared/types'
 
 export class DuplicateProjectError extends Error {
   constructor(path: string) {
@@ -57,14 +57,14 @@ export class ProjectRegistry {
 
   list(): ProjectView[] {
     return [...this.projects.filter((p) => p.pinned === true), ...this.projects.filter((p) => p.pinned !== true)]
-      .map((p) => ({ ...p, exists: isDirectory(p.path) }))
+      .map((p) => ({ ...p, kind: p.kind === 'planning' ? 'planning' : 'dev', exists: isDirectory(p.path) }))
   }
 
   get(id: string): ProjectRecord | undefined {
     return this.projects.find((p) => p.id === id)
   }
 
-  add(path: string): ProjectRecord {
+  add(path: string, kind: ProjectKind = 'dev'): ProjectRecord {
     const abs = resolve(path)
     if (!isDirectory(abs)) throw new InvalidProjectPathError(abs)
     if (this.projects.some((p) => normalize(p.path) === normalize(abs))) {
@@ -74,7 +74,8 @@ export class ProjectRegistry {
       id: randomUUID(),
       name: basename(abs) || abs,
       path: abs,
-      addedAt: new Date().toISOString()
+      addedAt: new Date().toISOString(),
+      kind
     }
     this.save([...this.projects, record])
     return record
@@ -84,7 +85,12 @@ export class ProjectRegistry {
     const idx = this.projects.findIndex((p) => p.id === id)
     if (idx < 0) throw new ProjectNotFoundError(id)
     const removed = this.projects[idx]
-    this.save(this.projects.filter((p) => p.id !== id))
+    this.save(this.projects.filter((p) => p.id !== id).map((p) => {
+      if (p.linkedPlanningId !== id) return p
+      const updated = { ...p }
+      delete updated.linkedPlanningId
+      return updated
+    }))
     return removed
   }
 
@@ -93,7 +99,7 @@ export class ProjectRegistry {
     try {
       const data: unknown = JSON.parse(readFileSync(this.file, 'utf8'))
       if (!Array.isArray(data)) throw new Error('projects.json is not an array')
-      this.projects = data.filter(isRecord)
+      this.projects = data.filter(isRecord).map((p) => ({ ...p, kind: p.kind === 'planning' ? 'planning' : 'dev' }))
     } catch {
       try {
         renameSync(this.file, `${this.file}.corrupt-${Date.now()}`)
@@ -102,6 +108,24 @@ export class ProjectRegistry {
       }
       this.projects = []
     }
+  }
+
+  setLinkedPlanning(devId: string, planningId: string | null): void {
+    const dev = this.get(devId)
+    if (!dev) throw new ProjectNotFoundError(devId)
+    if (dev.kind !== 'dev') throw new Error('Invalid link')
+    if (planningId !== null) {
+      const planning = this.get(planningId)
+      if (!planning) throw new ProjectNotFoundError(planningId)
+      if (planning.kind !== 'planning') throw new Error('Invalid link')
+    }
+    this.save(this.projects.map((p) => {
+      if (p.id !== devId) return p
+      const updated = { ...p }
+      if (planningId === null) delete updated.linkedPlanningId
+      else updated.linkedPlanningId = planningId
+      return updated
+    }))
   }
 
   setPinned(id: string, pinned: boolean): void {

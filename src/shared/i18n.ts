@@ -1,6 +1,8 @@
 export type Lang = 'ko' | 'en'
 
 export type MessageKey =
+  | 'planning' | 'dev' | 'newPlanningProject' | 'planningLink' | 'noPlanningLink' | 'masterMd' | 'openFile' | 'skillSpace'
+  | 'addPlanningProject' | 'addDevProject' | 'masterError'
   | 'gptLogTitle' | 'gptRunning' | 'gptSuccess' | 'gptFailed' | 'gptWaiting' | 'gptStalled'
   | 'gptLogEmpty' | 'gptCopy' | 'gptCollapse' | 'gptExpand' | 'gptHeight' | 'gptExitCode'
   | 'gptOrderUnknown' | 'gptLogError' | 'gptCustomized' | 'gptUpgraded' | 'gptUpgradeError'
@@ -90,6 +92,9 @@ export const MESSAGES: Record<Lang, Record<MessageKey, string>> = {
     setupIos2: '터미널에서 xcode-select --install을 실행하세요.',
     setupIos3: '공식 CocoaPods 가이드(guides.cocoapods.org)를 따라 CocoaPods를 설치하세요.',
 
+    planning: '기획', dev: '개발', newPlanningProject: '새 기획 프로젝트', planningLink: '기획 링크',
+    noPlanningLink: '링크 없음', masterMd: '총괄 MD', openFile: '파일 열기', skillSpace: '스킬 공간',
+    addPlanningProject: '기획 프로젝트 추가', addDevProject: '개발 프로젝트 추가', masterError: '총괄 MD를 읽거나 열 수 없습니다.',
     newProject: '새 프로젝트 만들기', existingFolder: '기존 폴더 추가', projectName: '프로젝트 이름',
     create: '만들기', cancel: '취소', creating: '만드는 중…', projectsRoot: '프로젝트 기본 위치',
     changeFolder: '변경…', resetFolder: '기본값으로', openFolder: '폴더 열기', projectActionError: '프로젝트 작업에 실패했습니다.',
@@ -213,6 +218,9 @@ export const MESSAGES: Record<Lang, Record<MessageKey, string>> = {
     setupIos2: 'Run xcode-select --install in a terminal.',
     setupIos3: 'Install CocoaPods following the official guide at guides.cocoapods.org.',
 
+    planning: 'Planning', dev: 'Development', newPlanningProject: 'New planning project', planningLink: 'Planning link',
+    noPlanningLink: 'No link', masterMd: 'Master MD', openFile: 'Open file', skillSpace: 'Skill space',
+    addPlanningProject: 'Add planning project', addDevProject: 'Add development project', masterError: 'Unable to read or open the master MD.',
     newProject: 'Create new project', existingFolder: 'Add existing folder', projectName: 'Project name',
     create: 'Create', cancel: 'Cancel', creating: 'Creating…', projectsRoot: 'Default project location',
     changeFolder: 'Change…', resetFolder: 'Use default', openFolder: 'Open folder', projectActionError: 'The project operation failed.',

@@ -180,7 +180,7 @@ it.each(['active', 'archive', 'journal'])('does not lose or duplicate entries af
 it('uses exactly the same rotation from the CLI and app', () => {
   seed(1000)
   const source = join(root, 'input.md'); fs.writeFileSync(source, '---\nname: test\ndescription: Test\n---\nhello')
-  const result = spawnSync(process.execPath, ['tools/yal-skill.cjs', 'set', 'test', '--file', source, '--summary', 'CLI'], { encoding: 'utf8', env: { ...process.env, YAL_SKILLS_DIR: root } })
+  const result = spawnSync(process.execPath, ['tools/yal-skill.cjs', 'set', 'test', '--approved', '--file', source, '--summary', 'CLI'], { encoding: 'utf8', env: { ...process.env, YAL_SKILLS_DIR: root } })
   expect(result.status, result.stderr).toBe(0)
   expect(archives()).toEqual(['skills-log.1.jsonl'])
   const store = new core.SkillStore(root)

@@ -1,5 +1,14 @@
 import type { SkillAction, SkillLogEntry, SkillLogPage, SkillSyncStatus } from '../../shared/skills'
 import { translate, type Lang } from '../../shared/i18n'
+// Each mounted space owns a guard. Refresh, space switch and unmount invalidate older responses.
+export function createSkillRequestGuard() {
+  let generation = 0
+  return {
+    next: () => ++generation,
+    current: () => generation,
+    accepts: (token: number) => token === generation
+  }
+}
 // Renderer requests pages only. Rotation/pruning belong exclusively to the core.
 export const SKILL_LOG_PAGE_SIZE = 200
 export async function loadSkillLogPage(

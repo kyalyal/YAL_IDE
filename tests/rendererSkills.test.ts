@@ -1,7 +1,96 @@
-import { expect, it } from 'vitest'
+// @vitest-environment happy-dom
+import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+import { SkillsWindow } from '../src/renderer/src/components/SkillsWindow'
+import { act, createElement, mount, click, button, change, deferred } from './rendererTestUtils'
 import { filterSkillLog, selectSkill, loadSkillLogPage, syncStatusLine } from '../src/renderer/src/skillsState'
 import { MESSAGES, translate } from '../src/shared/i18n'
-import type { SkillLogEntry } from '../src/shared/skills'
+import type { SkillLogEntry, SkillSpaceSyncStatus } from '../src/shared/skills'
+const never = (space: 'planning' | 'dev'): SkillSpaceSyncStatus => ({ space, lastSyncAt: null, state: 'never', skills: 0, projects: { total: 0, applied: 0, failed: 0 }, conflicts: [], failures: [] })
+const skillView = (name: string) => ({ name, description: name, content: `${name} content`, version: 1, createdAt: '', updatedAt: '2026-10-12', author: 'gpt', appliedProjects: 1 })
+beforeEach(() => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  window.yal = { readMaster: vi.fn().mockResolvedValue('MASTER content'), openMaster: vi.fn().mockResolvedValue(undefined) } as unknown as typeof window.yal
+  window.yalSkills = {
+    list: vi.fn(async space => [skillView(`${space}-skill`)]), log: vi.fn().mockResolvedValue({ entries: [], total: 0 }),
+    history: vi.fn().mockResolvedValue([1]), readVersion: vi.fn().mockResolvedValue('snapshot'), syncStatus: vi.fn(async space => never(space)),
+    onChanged: vi.fn(() => () => {}), onSyncStatus: vi.fn(() => () => {})
+  } as unknown as typeof window.yalSkills
+})
+afterEach(() => vi.unstubAllGlobals())
+it('switches all reads to the chosen space and shows the independent read-only master', async () => {
+  const ui = await mount(createElement(SkillsWindow))
+  try {
+    expect(window.yalSkills.list).toHaveBeenLastCalledWith('dev')
+    expect(ui.host.textContent).toContain('dev-skill content')
+    expect(ui.host.textContent).toContain('MASTER content')
+    await click(button(ui.host, '파일 열기'))
+    expect(window.yal.openMaster).toHaveBeenCalledOnce()
+    await click(button(ui.host, '기획'))
+    expect(window.yalSkills.list).toHaveBeenLastCalledWith('planning')
+    expect(window.yalSkills.log).toHaveBeenLastCalledWith('planning', 200, { before: 0, includeCount: true })
+    expect(window.yalSkills.syncStatus).toHaveBeenLastCalledWith('planning')
+    expect(window.yalSkills.history).toHaveBeenLastCalledWith('planning', 'planning-skill')
+    expect(ui.host.textContent).toContain('planning-skill content')
+    expect(ui.host.textContent).not.toContain('dev-skill')
+    await click(button(ui.host, '버전 기록'))
+    expect(window.yalSkills.readVersion).toHaveBeenLastCalledWith('planning', 'planning-skill', 1)
+  } finally { await ui.close() }
+})
+it('ignores late list and sync status responses from the previous space', async () => {
+  const oldList = deferred<ReturnType<typeof skillView>[]>()
+  const oldStatus = deferred<ReturnType<typeof never>>()
+  vi.mocked(window.yalSkills.list).mockImplementation(space => space === 'dev' ? oldList.promise : Promise.resolve([skillView('planning-skill')]))
+  vi.mocked(window.yalSkills.syncStatus).mockImplementation(space => space === 'dev' ? oldStatus.promise : Promise.resolve(never(space)))
+  const ui = await mount(createElement(SkillsWindow))
+  try {
+    await click(button(ui.host, '기획'))
+    await act(async () => { oldList.resolve([skillView('late-dev')]); oldStatus.resolve({ ...never('dev'), state: 'error', lastSyncAt: '2026-10-12', projects: { total: 99, applied: 99, failed: 0 } }) })
+    expect(ui.host.textContent).toContain('planning-skill content')
+    expect(ui.host.textContent).not.toContain('late-dev')
+    expect(ui.host.textContent).not.toContain('99')
+  } finally { await ui.close() }
+})
+it('ignores other-space status events and old history snapshots even after switching back', async () => {
+  const snapshot = deferred<string | null>()
+  vi.mocked(window.yalSkills.readVersion).mockImplementation(space => space === 'dev' ? snapshot.promise : Promise.resolve('planning snapshot'))
+  const ui = await mount(createElement(SkillsWindow))
+  try {
+    await click(button(ui.host, '버전 기록'))
+    await click(button(ui.host, '기획'))
+    expect(ui.host.textContent).not.toContain('snapshot')
+    const listener = vi.mocked(window.yalSkills.onSyncStatus).mock.calls.at(-1)![0]
+    await act(async () => listener({ ...never('dev'), lastSyncAt: '2026-10-12', state: 'error', failures: [{ project: 'wrong-space', reason: 'wrong-space' }] }))
+    expect(ui.host.textContent).not.toContain('wrong-space')
+    await click(button(ui.host, '버전 기록'))
+    expect(ui.host.textContent).toContain('planning snapshot')
+    await act(async () => snapshot.resolve('late dev snapshot'))
+    expect(ui.host.textContent).not.toContain('late dev snapshot')
+    await click(button(ui.host, '개발'))
+    expect(ui.host.textContent).toContain('dev-skill content')
+    expect(ui.host.textContent).not.toContain('planning snapshot')
+  } finally { await ui.close() }
+})
+it('ignores a late previous-space log page and resets log filters on tab change', async () => {
+  const pending = deferred<{ entries: SkillLogEntry[]; total: number }>()
+  const entry: SkillLogEntry = { ts: '2026-10-12', skill: 'dev-skill', action: 'update', version: 1, author: 'gpt', summary: 'dev log', added: 1, removed: 0 }
+  vi.mocked(window.yalSkills.log).mockImplementation(((space: string, _limit: number, options: { before: number }) => {
+    if (space === 'dev') return options.before ? pending.promise : Promise.resolve({ entries: [entry], total: 2 })
+    return Promise.resolve({ entries: [{ ...entry, skill: 'planning-skill', summary: 'planning log' }], total: 1 })
+  }) as unknown as typeof window.yalSkills.log)
+  const ui = await mount(createElement(SkillsWindow))
+  try {
+    await click(button(ui.host, '변경 로그'))
+    await change(ui.host.querySelector('.skills-log-filters select')!, 'dev-skill')
+    await click(button(ui.host, '이전 기록 더 보기'))
+    expect(window.yalSkills.log).toHaveBeenLastCalledWith('dev', 200, { before: 1, includeCount: true })
+    await click(button(ui.host, '기획'))
+    await click(button(ui.host, '변경 로그'))
+    expect(ui.host.querySelector<HTMLSelectElement>('.skills-log-filters select')!.value).toBe('')
+    await act(async () => pending.resolve({ entries: [{ ...entry, summary: 'late dev log' }], total: 2 }))
+    expect(ui.host.textContent).toContain('planning log')
+    expect(ui.host.textContent).not.toContain('dev log')
+  } finally { await ui.close() }
+})
 it('hides legacy sync entries from all UI filters', () => {
   const legacy = { ts: '2026-01-01', skill: 'test', action: 'sync', version: 1, author: 'system', summary: 'Old sync', added: 0, removed: 0 } as unknown as SkillLogEntry
   expect(filterSkillLog([legacy], '', '')).toEqual([])

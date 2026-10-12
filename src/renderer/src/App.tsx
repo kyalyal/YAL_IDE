@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactElement } from 'react'
-import type { AddProjectResult, CliStatus, ProjectStatus, ProjectView, ProvisionResult } from '../../shared/types'
+import type { AddProjectResult, CliStatus, ProjectKind, ProjectStatus, ProjectView, ProvisionResult } from '../../shared/types'
 import { EnvBanner, ProvisionBanner, SetupGuide } from './components/Notices'
 import { ProjectList } from './components/ProjectList'
 import { TerminalView } from './components/TerminalView'
@@ -107,9 +107,9 @@ export function App() {
     }
   }
 
-  async function handleAdd(name?: string): Promise<AddProjectResult> {
+  async function handleAdd(name: string | undefined, kind: ProjectKind): Promise<AddProjectResult> {
     setMessage('')
-    const res = name === undefined ? await window.yal.addProject() : await window.yal.createProject(name)
+    const res = name === undefined ? await window.yal.addProject(kind) : await window.yal.createProject(name, kind)
     if (!res.ok) {
       if (name === undefined && res.reason !== 'cancelled') setMessage(res.message)
       return res
@@ -163,8 +163,9 @@ export function App() {
         runningIds={runningIds}
         statuses={statuses}
         onSelect={handleSelect}
-        onAdd={() => void handleAdd()}
+        onAdd={kind => void handleAdd(undefined, kind).catch(() => setMessage(t('projectActionError')))}
         onCreate={handleAdd}
+        onLinkedPlanning={async (id, planningId) => setProjects(await window.yal.setLinkedPlanning(id, planningId))}
         onPin={async (p) => setProjects(await window.yal.setProjectPinned(p.id, !p.pinned))}
         onRemove={(p) => void handleRemove(p)}
         onOpenSettings={openSettings}

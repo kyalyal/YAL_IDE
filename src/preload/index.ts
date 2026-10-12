@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { GPT_LOG_IPC, type GptLogApi, type GptLogAppend } from '../shared/gptLog'
-import { SKILLS_IPC, type SkillsApi, type SkillSyncStatus } from '../shared/skills'
+import { SKILLS_IPC, type SkillsApi, type SkillSpaceSyncStatus } from '../shared/skills'
 import { IPC, type YalApi } from '../shared/types'
 import { VIEWER_IPC, type ViewerApi, type ServerStatus, type ConsoleEntry } from '../shared/viewer'
 import { SETTINGS_IPC, type AppSettings, type SettingsApi } from '../shared/settings'
@@ -8,12 +8,15 @@ import { EXPORT_IPC, type ExportApi, type ExportRunStatus, type ToolInstallStatu
 
 const api: YalApi = {
   listProjects: () => ipcRenderer.invoke(IPC.listProjects),
-  addProject: () => ipcRenderer.invoke(IPC.addProject),
-  createProject: (name) => ipcRenderer.invoke(IPC.createProject, name),
+  addProject: (kind = 'dev') => ipcRenderer.invoke(IPC.addProject, kind),
+  createProject: (name, kind = 'dev') => ipcRenderer.invoke(IPC.createProject, name, kind),
   getProjectsRoot: () => ipcRenderer.invoke(IPC.getProjectsRoot),
   chooseProjectsRoot: () => ipcRenderer.invoke(IPC.chooseProjectsRoot),
   openProjectsRoot: () => ipcRenderer.invoke(IPC.openProjectsRoot),
   setProjectPinned: (id, pinned) => ipcRenderer.invoke(IPC.setProjectPinned, id, pinned),
+  setLinkedPlanning: (devId, planningId) => ipcRenderer.invoke(IPC.setLinkedPlanning, devId, planningId),
+  openMaster: () => ipcRenderer.invoke(IPC.openMaster),
+  readMaster: () => ipcRenderer.invoke(IPC.readMaster),
   removeProject: (id) => ipcRenderer.invoke(IPC.removeProject, id),
   checkEnv: () => ipcRenderer.invoke(IPC.checkEnv),
   runningTerminals: () => ipcRenderer.invoke(IPC.runningTerminals),
@@ -48,12 +51,14 @@ const gptLogApi: GptLogApi = {
 contextBridge.exposeInMainWorld('yalGptLog', gptLogApi)
 
 const skillsApi: SkillsApi = {
-  list: () => ipcRenderer.invoke(SKILLS_IPC.list),
-  get: name => ipcRenderer.invoke(SKILLS_IPC.get, name),
-  history: name => ipcRenderer.invoke(SKILLS_IPC.history, name),
-  readVersion: (name, version) => ipcRenderer.invoke(SKILLS_IPC.readVersion, name, version),
-  log: (limit, options?) => options === undefined ? ipcRenderer.invoke(SKILLS_IPC.log, limit) : ipcRenderer.invoke(SKILLS_IPC.log, limit, options),
-  syncStatus: () => ipcRenderer.invoke(SKILLS_IPC.syncStatus),
+  list: space => ipcRenderer.invoke(SKILLS_IPC.list, space),
+  get: (space, name) => ipcRenderer.invoke(SKILLS_IPC.get, space, name),
+  history: (space, name) => ipcRenderer.invoke(SKILLS_IPC.history, space, name),
+  readVersion: (space, name, version) => ipcRenderer.invoke(SKILLS_IPC.readVersion, space, name, version),
+  log: (space, limit, options?) => options === undefined
+    ? ipcRenderer.invoke(SKILLS_IPC.log, space, limit)
+    : ipcRenderer.invoke(SKILLS_IPC.log, space, limit, options),
+  syncStatus: space => ipcRenderer.invoke(SKILLS_IPC.syncStatus, space),
   openWindow: () => ipcRenderer.invoke(SKILLS_IPC.openWindow),
   onChanged: callback => {
     const handler = (): void => callback()
@@ -61,7 +66,7 @@ const skillsApi: SkillsApi = {
     return () => ipcRenderer.removeListener(SKILLS_IPC.changed, handler)
   },
   onSyncStatus: callback => {
-    const handler = (_event: unknown, status: SkillSyncStatus): void => callback(status)
+    const handler = (_event: unknown, status: SkillSpaceSyncStatus): void => callback(status)
     ipcRenderer.on(SKILLS_IPC.syncStatus, handler)
     return () => ipcRenderer.removeListener(SKILLS_IPC.syncStatus, handler)
   }

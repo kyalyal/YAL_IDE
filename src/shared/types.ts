@@ -1,12 +1,17 @@
+export type ProjectKind = 'planning' | 'dev'
+
 export interface ProjectRecord {
   id: string
   name: string
   path: string
   addedAt: string
   pinned?: boolean
+  kind?: ProjectKind
+  linkedPlanningId?: string
 }
 
 export interface ProjectView extends ProjectRecord {
+  kind: ProjectKind
   exists: boolean
 }
 
@@ -43,6 +48,9 @@ export const IPC = {
   openProjectsRoot: 'projects:open-root',
   setProjectPinned: 'projects:pin',
   removeProject: 'projects:remove',
+  setLinkedPlanning: 'projects:set-linked-planning',
+  openMaster: 'master:open',
+  readMaster: 'master:read',
   checkEnv: 'env:check',
   runningTerminals: 'terminal:running',
   projectStatuses: 'status:list',
@@ -56,12 +64,15 @@ export const IPC = {
 
 export interface YalApi {
   listProjects(): Promise<ProjectView[]>
-  addProject(): Promise<AddProjectResult>
-  createProject(name: string): Promise<AddProjectResult>
+  addProject(kind?: ProjectKind): Promise<AddProjectResult>
+  createProject(name: string, kind?: ProjectKind): Promise<AddProjectResult>
   getProjectsRoot(): Promise<string>
   chooseProjectsRoot(): Promise<string | null>
   openProjectsRoot(): Promise<void>
   setProjectPinned(id: string, pinned: boolean): Promise<ProjectView[]>
+  setLinkedPlanning(devId: string, planningId: string | null): Promise<ProjectView[]>
+  openMaster(): Promise<void>
+  readMaster(): Promise<string>
   removeProject(id: string): Promise<void>
   checkEnv(): Promise<CliStatus[]>
   runningTerminals(): Promise<string[]>

@@ -1,8 +1,8 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
-import { existsSync, statSync, readdirSync, mkdirSync, readFileSync, realpathSync } from 'node:fs'
-import { join } from 'node:path'
+import { existsSync, statSync, readdirSync, mkdirSync, readFileSync, realpathSync, watch, type FSWatcher } from 'node:fs'
+import { dirname, join } from 'node:path'
 import { homedir } from 'node:os'
-import { IPC, type AddProjectResult, type StartTerminalResult } from '../shared/types'
+import { IPC, type AddProjectResult, type StartTerminalResult, type ProjectKind } from '../shared/types'
 import { checkCli, defaultRunner } from './cliCheck'
 import { hasClaudeSession } from './claudeSessions'
 import { installHooks } from './hookSetup'
@@ -27,6 +27,7 @@ import { SETTINGS_IPC, type AppSettingsPatch } from '../shared/settings'
 import { AppSettingsStore } from './settingsStore'
 import { openSettingsWindow } from './settingsWindow'
 import { startSkillsSystem } from './skillsRuntime'
+import { seedMaster, syncMaster, syncPlanningLinks } from './masterDoc'
 import { updateSkillsWindowTitle } from './skillsWindow'
 import { shouldQuitAfterWindowsClosed } from './viewerLifecycle'
 import { EXPORT_IPC, type ExportConfig, type ExportPlatform, type ToolInstallRequest } from '../shared/exporter'
@@ -184,6 +185,65 @@ app.whenReady().then(async () => {
   const viewerSettings = new ViewerSettingsStore(join(userData, 'viewer-settings.json'))
   const settingsStore = new AppSettingsStore(join(userData, 'app-settings.json'))
   const skills = startSkillsSystem(userData, () => registry.list(), () => win, () => settingsStore.get().language)
+  // startSkillsSystem migrates legacy skills before MASTER is seeded.
+  const masterPath = seedMaster(userData)
+  for (const project of registry.list()) {
+    try {
+      // Missing/moved registered folders must not be recreated by provision().
+      if (!project.exists) throw new Error('Project folder does not exist')
+      // Keep import reinforcement results separate from GPT upgrade notifications.
+      const result = provision(project.path, project.name, project.kind)
+      for (const error of result.errors) console.error('Project import reinforcement failed:', project.path, error)
+    } catch (error) { console.error('Project import reinforcement failed:', project.path, error) }
+  }
+  const resyncMaster = (): void => {
+    const result = syncMaster(masterPath, registry.list())
+    for (const error of result.errors) console.error('MASTER sync failed:', error)
+  }
+  const resyncProjects = (): void => {
+    skills.resync()
+    resyncMaster()
+    syncPlanningLinks(registry.list())
+  }
+  resyncMaster()
+  syncPlanningLinks(registry.list())
+  let masterWatcher: FSWatcher | undefined
+  let masterTimer: ReturnType<typeof setTimeout> | undefined
+  let masterClosed = false
+  try {
+    // Watching the directory also handles editors that replace MASTER atomically.
+    masterWatcher = watch(dirname(masterPath), (_event, file) => {
+      if (masterClosed || (file !== null && String(file) !== 'MASTER.md')) return
+      if (masterTimer) clearTimeout(masterTimer)
+      masterTimer = setTimeout(() => { masterTimer = undefined; resyncMaster() }, 200)
+      masterTimer.unref()
+    })
+    masterWatcher.unref()
+    masterWatcher.on('error', error => console.error('MASTER watch failed:', error))
+  } catch (error) { console.error('MASTER watch unavailable:', error) }
+  app.on('before-quit', () => {
+    masterClosed = true
+    masterWatcher?.close()
+    masterWatcher = undefined
+    if (masterTimer) clearTimeout(masterTimer)
+    masterTimer = undefined
+  })
+  const requireKind = (kind: unknown): ProjectKind => {
+    if (kind === undefined) return 'dev'
+    if (kind !== 'dev' && kind !== 'planning') throw new Error('Invalid project kind')
+    return kind
+  }
+  ipcMain.handle(IPC.setLinkedPlanning, (_event, devId: string, planningId: string | null) => {
+    registry.setLinkedPlanning(devId, planningId)
+    resyncProjects()
+    return registry.list()
+  })
+  ipcMain.handle(IPC.openMaster, async () => {
+    const error = await shell.openPath(masterPath)
+    if (error) throw new Error(error)
+  })
+  ipcMain.handle(IPC.readMaster, () => readFileSync(masterPath, 'utf8'))
+
   const projectsRoot = () => settingsStore.get().projectsRoot ?? join(app.getPath('documents'), 'YAL Projects')
   ipcMain.handle(IPC.getProjectsRoot, projectsRoot)
   ipcMain.handle(IPC.chooseProjectsRoot, async (event) => {
@@ -198,14 +258,15 @@ app.whenReady().then(async () => {
     const error = await shell.openPath(root)
     if (error) throw new Error(error)
   })
-  ipcMain.handle(IPC.createProject, (_event, name: string): AddProjectResult => {
+  ipcMain.handle(IPC.createProject, (_event, name: string, kind?: ProjectKind): AddProjectResult => {
+    const projectKind = requireKind(kind)
     const result = createProject({
       fs: { existsSync, mkdirSync }, registry, provision, language: settingsStore.get().language
-    }, projectsRoot(), name)
+    }, projectsRoot(), name, projectKind)
     if (result.ok) {
       gptLogs.watch(result.project.id)
       gptUpgrades.set(result.project.id, result.provision)
-      skills.resync()
+      resyncProjects()
     }
     return result
   })
@@ -325,7 +386,10 @@ app.whenReady().then(async () => {
       hasSession: (p) => hasClaudeSession(p),
       pathExists: existsSync,
       extraArgs: nodeStatus.installed ? ['--settings', hooks.settingsPath] : [],
-      envFor: (id) => ({ YAL_PROJECT_ID: id, YAL_STATUS_DIR: hooks.statusDir, YAL_GPT_LOG: gptLogs.path(id), YAL_SKILLS_DIR: skills.store.rootDir, YAL_SKILL_TOOL: skills.toolPath })
+      envFor: (id) => {
+        const space = registry.list().find(project => project.id === id)?.kind ?? 'dev'
+        return { YAL_PROJECT_ID: id, YAL_STATUS_DIR: hooks.statusDir, YAL_GPT_LOG: gptLogs.path(id), YAL_SKILLS_DIR: skills.stores[space].rootDir, YAL_SPACE: space, YAL_SKILL_TOOL: skills.toolPath }
+      }
     },
     {
       onData: (id, data) => win?.webContents.send(IPC.terminalData, id, data),
@@ -338,7 +402,8 @@ app.whenReady().then(async () => {
 
   ipcMain.handle(IPC.listProjects, () => registry.list())
 
-  ipcMain.handle(IPC.addProject, async (): Promise<AddProjectResult> => {
+  ipcMain.handle(IPC.addProject, async (_event, kind?: ProjectKind): Promise<AddProjectResult> => {
+    const projectKind = requireKind(kind)
     const picked = await dialog.showOpenDialog(win!, {
       title: '프로젝트 폴더 선택',
       properties: ['openDirectory']
@@ -347,11 +412,11 @@ app.whenReady().then(async () => {
       return { ok: false, reason: 'cancelled', message: '' }
     }
     try {
-      const record = registry.add(picked.filePaths[0])
-      const result = provision(record.path, record.name)
+      const record = registry.add(picked.filePaths[0], projectKind)
+      const result = provision(record.path, record.name, projectKind)
       gptLogs.watch(record.id)
       gptUpgrades.set(record.id, result)
-      skills.resync()
+      resyncProjects()
       const project = registry.list().find((p) => p.id === record.id)!
       return { ok: true, project, provision: result }
     } catch (e) {
@@ -379,7 +444,7 @@ app.whenReady().then(async () => {
     gptUpgrades.delete(id)
     tracker.reset(id)
     registry.remove(id)
-    skills.schedule()
+    resyncProjects()
   })
 
   ipcMain.handle(IPC.checkEnv, async () => [

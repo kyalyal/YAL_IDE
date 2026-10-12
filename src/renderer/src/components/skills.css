@@ -1,6 +1,12 @@
 .skills-window { box-sizing: border-box; height: 100vh; display: flex; flex-direction: column; overflow: hidden; padding: 24px; gap: 16px; color: #dedede; background: #1e1e1e; }
 .skills-header { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
 .skills-header h1 { font-size: 21px; font-weight: 600; margin: 0; }
+.skills-space-tabs { flex-shrink: 0; }
+.skills-space-content { display: flex; flex-direction: column; flex: 1; min-height: 0; gap: 16px; overflow: hidden; }
+.skills-master { flex-shrink: 0; }
+.skills-master-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
+.skills-master h2 { margin: 0; font-size: 14px; }
+.skills-master .skills-source { max-height: 100px; padding: 10px 12px; }
 .skills-window button, .skills-window select { color: #dedede; background: #292929; border: 1px solid #505050; border-radius: 4px; padding: 8px 12px; font: inherit; }
 .skills-window button { cursor: pointer; }
 .skills-window button:disabled { cursor: wait; opacity: .6; }

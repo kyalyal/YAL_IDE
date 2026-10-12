@@ -105,12 +105,12 @@ describe('spawned shared CLI', () => {
   })
   it('sets, shows, lists, logs and removes using the store format', () => {
     const file = join(root, 'input.md'); fs.writeFileSync(file, content())
-    expect(cli(['set', 'test', '--file', file, '--summary', 'CLI', '--author', 'gpt']).status).toBe(0)
+    expect(cli(['set', 'test', '--approved', '--file', file, '--summary', 'CLI', '--author', 'gpt']).status).toBe(0)
     expect(cli(['show', 'test']).stdout).toBe(content())
     expect(JSON.parse(cli(['list']).stdout)[0].name).toBe('test')
     expect(JSON.parse(cli(['log', '--limit', '1']).stdout)[0].summary).toBe('CLI')
     expect(new SkillStore(root).get('test')?.version).toBe(1)
-    expect(cli(['remove', 'test', '--summary', 'Removed']).status).toBe(0)
+    expect(cli(['remove', 'test', '--approved', '--summary', 'Removed']).status).toBe(0)
   })
   it('rejects invalid names and missing environment', () => {
     expect(cli(['show', '../bad']).status).not.toBe(0)
@@ -118,7 +118,7 @@ describe('spawned shared CLI', () => {
   })
   it('handles a near-limit skill with many short lines without quadratic creation time', () => {
     const file = join(root, 'many-lines.md'); fs.writeFileSync(file, content('\n'.repeat(60000)))
-    const result = spawnSync(process.execPath, [join(process.cwd(), 'tools/yal-skill.cjs'), 'set', 'test', '--file', file, '--summary', 'Many lines'], {
+    const result = spawnSync(process.execPath, [join(process.cwd(), 'tools/yal-skill.cjs'), 'set', 'test', '--approved', '--file', file, '--summary', 'Many lines'], {
       encoding: 'utf8', env: { ...process.env, YAL_SKILLS_DIR: root }, timeout: 2000
     })
     expect(result.status, result.error?.message).toBe(0)

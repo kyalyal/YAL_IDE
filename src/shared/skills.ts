@@ -1,3 +1,6 @@
+import type { SkillSpace } from '../main/spaces'
+export type { SkillSpace } from '../main/spaces'
+
 export interface Skill {
   name: string
   description: string
@@ -25,21 +28,21 @@ export interface SkillSyncStatus {
   conflicts: { skill: string; project: string; reason: string }[]
   failures: { project: string; reason: string }[]
 }
+export interface SkillSpaceSyncStatus extends SkillSyncStatus { space: SkillSpace }
 export interface SkillSyncResult { updated: number; removed: number; conflicts: number; errors: string[]; applied: Record<string, number>; status: SkillSyncStatus }
 export const SKILLS_IPC = {
   list: 'skills:list', get: 'skills:get', history: 'skills:history', readVersion: 'skills:readVersion',
   log: 'skills:log', syncStatus: 'skills:syncStatus', openWindow: 'skills:openWindow', changed: 'skills:changed'
 } as const
 export interface SkillsApi {
-  list(): Promise<SkillView[]>
-  get(name: string): Promise<Skill | null>
-  history(name: string): Promise<number[]>
-  readVersion(name: string, version: number): Promise<string | null>
-  // Count travels over the existing read-only log IPC; no new preload methods.
-  log(limit: number, options: SkillLogOptions & { includeCount: true }): Promise<SkillLogPage>
-  log(limit?: number, options?: SkillLogOptions): Promise<SkillLogEntry[]>
-  syncStatus(): Promise<SkillSyncStatus>
+  list(space: SkillSpace): Promise<SkillView[]>
+  get(space: SkillSpace, name: string): Promise<Skill | null>
+  history(space: SkillSpace, name: string): Promise<number[]>
+  readVersion(space: SkillSpace, name: string, version: number): Promise<string | null>
+  log(space: SkillSpace, limit: number, options: SkillLogOptions & { includeCount: true }): Promise<SkillLogPage>
+  log(space: SkillSpace, limit?: number, options?: SkillLogOptions): Promise<SkillLogEntry[]>
+  syncStatus(space: SkillSpace): Promise<SkillSpaceSyncStatus>
   openWindow(): Promise<void>
   onChanged(callback: () => void): () => void
-  onSyncStatus(callback: (status: SkillSyncStatus) => void): () => void
+  onSyncStatus(callback: (status: SkillSpaceSyncStatus) => void): () => void
 }

@@ -24,6 +24,13 @@ function fixture(existing = false) {
 }
 
 describe('createProject', () => {
+  it('passes planning kind to registration and provisioning and fills the returned view', () => {
+    const { root, deps } = fixture()
+    const result = createProject(deps, root, 'planning', 'planning')
+    expect(deps.registry.add).toHaveBeenCalledWith(join(root, 'planning'), 'planning')
+    expect(deps.provision).toHaveBeenCalledWith(join(root, 'planning'), 'planning', 'planning')
+    expect(result).toMatchObject({ ok: true, project: { kind: 'planning' } })
+  })
   it('rejects a relative root before filesystem changes', () => {
     const { deps } = fixture()
     expect(createProject(deps, 'relative', '게임').ok).toBe(false)
@@ -39,10 +46,10 @@ describe('createProject', () => {
   it('creates missing root recursively, creates and registers a new folder, then provisions', () => {
     const { root, deps } = fixture()
     const result = createProject(deps, root, '게임')
-    expect(result.ok).toBe(true)
+    expect(result).toMatchObject({ ok: true, project: { kind: 'dev' } })
     expect(deps.fs.mkdirSync.mock.calls).toEqual([[root, { recursive: true }], [join(root, '게임')]])
-    expect(deps.registry.add).toHaveBeenCalledWith(join(root, '게임'))
-    expect(deps.provision).toHaveBeenCalledWith(join(root, '게임'), '게임')
+    expect(deps.registry.add).toHaveBeenCalledWith(join(root, '게임'), 'dev')
+    expect(deps.provision).toHaveBeenCalledWith(join(root, '게임'), '게임', 'dev')
   })
   it('refuses existing folders without registering or provisioning', () => {
     const { root, deps } = fixture(true)

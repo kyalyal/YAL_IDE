@@ -1,3 +1,9 @@
+import type { ProjectKind } from '../../shared/types'
+
+export function splitByKind<T extends { kind: ProjectKind; pinned?: boolean }>(projects: T[]): { planning: T[]; dev: T[] } {
+  return { planning: orderProjects(projects.filter(p => p.kind === 'planning')), dev: orderProjects(projects.filter(p => p.kind === 'dev')) }
+}
+
 export function orderProjects<T extends { pinned?: boolean }>(projects: T[]): T[] {
   return [...projects.filter(p => p.pinned === true), ...projects.filter(p => p.pinned !== true)]
 }

@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useRef, useState } from 'react'
-import type { AddProjectResult, ProjectStatus, ProjectView } from '../../../shared/types'
+import type { AddProjectResult, ProjectKind, ProjectStatus, ProjectView } from '../../../shared/types'
 import { validateProjectName } from '../../../shared/projectNames'
-import { orderProjects, pinnedSplitIndex, pinLabel, projectTargetPath } from '../projectListState'
+import { splitByKind, pinnedSplitIndex, pinLabel, projectTargetPath } from '../projectListState'
 import { useI18n } from '../i18n/I18nProvider'
 
 interface Props {
@@ -10,8 +10,9 @@ interface Props {
   runningIds: string[]
   statuses: Record<string, ProjectStatus>
   onSelect(id: string): void
-  onAdd(): void
-  onCreate(name: string): Promise<AddProjectResult>
+  onAdd(kind: ProjectKind): void
+  onCreate(name: string, kind: ProjectKind): Promise<AddProjectResult>
+  onLinkedPlanning(id: string, planningId: string | null): Promise<void>
   onPin(project: ProjectView): Promise<void>
   onRemove(project: ProjectView): void
   onOpenSettings(): void
@@ -26,14 +27,15 @@ export function ProjectList({
   onSelect,
   onAdd,
   onCreate,
+  onLinkedPlanning,
   onPin,
   onRemove,
   onOpenSettings,
   onOpenSkills
 }: Props) {
   const { t } = useI18n()
-  const [menuOpen, setMenuOpen] = useState(false)
-  const [formOpen, setFormOpen] = useState(false)
+  const [menuOpen, setMenuOpen] = useState<ProjectKind | null>(null)
+  const [formOpen, setFormOpen] = useState<ProjectKind | null>(null)
   const [name, setName] = useState('')
   const [root, setRoot] = useState('')
   const [error, setError] = useState('')
@@ -43,18 +45,18 @@ export function ProjectList({
   const creating = useRef(false)
   const restoreAddFocus = useRef(false)
   const nameInput = useRef<HTMLInputElement>(null)
-  const addButton = useRef<HTMLButtonElement>(null)
+  const addButtons = useRef<Partial<Record<ProjectKind, HTMLButtonElement | null>>>({})
+  const focusKind = useRef<ProjectKind>('dev')
   const menu = useRef<HTMLDivElement>(null)
   const checked = validateProjectName(name)
-  const orderedProjects = orderProjects(projects)
-  const splitIndex = pinnedSplitIndex(orderedProjects)
+  const groups = splitByKind(projects)
   useEffect(() => {
     if (menuOpen) menu.current?.querySelector('button')?.focus()
   }, [menuOpen])
   useEffect(() => {
     if (!formOpen && !busy && restoreAddFocus.current) {
       restoreAddFocus.current = false
-      addButton.current?.focus()
+      addButtons.current[focusKind.current]?.focus()
     }
   }, [formOpen, busy])
   useEffect(() => {
@@ -71,19 +73,21 @@ export function ProjectList({
   }, [formOpen, t])
   function cancel() {
     if (creating.current) return
+    if (formOpen) focusKind.current = formOpen
     restoreAddFocus.current = true
-    setFormOpen(false)
+    setFormOpen(null)
     setError('')
   }
   async function submit() {
-    if (creating.current || !root) return
+    if (creating.current || !root || !formOpen) return
     if (!checked.ok) { setError(t(checked.key)); return }
     creating.current = true
+    focusKind.current = formOpen
     setBusy(true)
     setError('')
     try {
-      const result = await onCreate(name)
-      if (result.ok) { restoreAddFocus.current = true; setFormOpen(false); setName('') }
+      const result = await onCreate(name, formOpen)
+      if (result.ok) { restoreAddFocus.current = true; setFormOpen(null); setName('') }
       else setError(result.message)
     } catch { setError(t('projectActionError')) }
     finally { creating.current = false; setBusy(false) }
@@ -102,20 +106,28 @@ export function ProjectList({
   }
   return (
     <aside className="sidebar">
+      <div className="project-spaces">
+      {(['planning', 'dev'] as const).map(kind => {
+        const orderedProjects = groups[kind]
+        const splitIndex = pinnedSplitIndex(orderedProjects)
+        return <section key={kind} className={`project-space ${kind}`} aria-label={t(kind)}>
       <div className="sidebar-header">
-        <span>{t('projects')}</span>
-        <button ref={addButton} className="icon-btn" title={t('addProject')} aria-label={t('addProject')}
-          aria-expanded={menuOpen} aria-controls="project-add-menu" disabled={busy || formOpen}
-          onClick={() => setMenuOpen(open => !open)}>
+        <span>{t(kind)}</span>
+        <button ref={node => { addButtons.current[kind] = node }} className="icon-btn"
+          title={t(kind === 'planning' ? 'addPlanningProject' : 'addDevProject')}
+          aria-label={t(kind === 'planning' ? 'addPlanningProject' : 'addDevProject')}
+          aria-expanded={menuOpen === kind} aria-controls={`project-add-menu-${kind}`} disabled={busy || formOpen === kind}
+          onClick={() => { focusKind.current = kind; setMenuOpen(open => open === kind ? null : kind) }}>
           +
         </button>
       </div>
-      {menuOpen && <div id="project-add-menu" ref={menu} className="project-add-menu"
-        onKeyDown={event => { if (event.key === 'Escape') { setMenuOpen(false); addButton.current?.focus() } }}>
-        <button onClick={() => { setMenuOpen(false); setFormOpen(true); setName(''); setRoot(''); setError('') }}>{t('newProject')}</button>
-        <button onClick={() => { setMenuOpen(false); onAdd() }}>{t('existingFolder')}</button>
+      <div className="project-space-scroll">
+      {menuOpen === kind && <div id={`project-add-menu-${kind}`} ref={menu} className="project-add-menu"
+        onKeyDown={event => { if (event.key === 'Escape') { setMenuOpen(null); addButtons.current[focusKind.current]?.focus() } }}>
+        <button onClick={() => { setMenuOpen(null); setFormOpen(kind); setName(''); setRoot(''); setError('') }}>{t(kind === 'planning' ? 'newPlanningProject' : 'newProject')}</button>
+        <button onClick={() => { setMenuOpen(null); onAdd(kind) }}>{t('existingFolder')}</button>
       </div>}
-      {formOpen && <form className="project-create-form" onSubmit={event => { event.preventDefault(); void submit() }}
+      {formOpen === kind && <form className="project-create-form" onSubmit={event => { event.preventDefault(); void submit() }}
         onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); cancel() } }}>
         <label htmlFor="project-name">{t('projectName')}</label>
         <input ref={nameInput} id="project-name" value={name} disabled={busy} aria-invalid={Boolean(error)}
@@ -128,7 +140,7 @@ export function ProjectList({
         </div>
         <p id="project-create-error" className="project-create-error" role="alert">{error}</p>
       </form>}
-      {projects.length === 0 && (
+      {orderedProjects.length === 0 && (
         <div className="empty-hint">
           {t('noProjects')}
           <br />{t('addFolderHint')}
@@ -150,7 +162,16 @@ export function ProjectList({
               className={'dot ' + status + (runningIds.includes(p.id) ? ' live' : '')}
               title={statusLabel(status) || t(runningIds.includes(p.id) ? 'idle' : 'noSession')}
             />
-            <span className="project-name">{p.name}</span>
+            <div className="project-identity">
+              <span className="project-name">{p.name}</span>
+              {kind === 'dev' && p.id === selectedId ? <select className="planning-link" aria-label={t('planningLink')}
+                value={p.linkedPlanningId ?? ''} onClick={event => event.stopPropagation()}
+                onChange={event => { void onLinkedPlanning(p.id, event.target.value || null).catch(() => setError(t('projectActionError'))) }}>
+                <option value="">{t('noPlanningLink')}</option>
+                {groups.planning.map(plan => <option key={plan.id} value={plan.id}>{plan.name}</option>)}
+              </select> : kind === 'dev' && p.linkedPlanningId && groups.planning.some(plan => plan.id === p.linkedPlanningId) &&
+                <small className="planning-link-name">🔗 {groups.planning.find(plan => plan.id === p.linkedPlanningId)?.name}</small>}
+            </div>
             {statusLabel(status) && <span className={'status-label ' + status}>{statusLabel(status)}</span>}
             {!p.exists && <span className="badge-missing">{t('missingPath')}</span>}
             <button className={'icon-btn pin' + (p.pinned ? ' pinned' : '')}
@@ -175,6 +196,10 @@ export function ProjectList({
           )
         })}
       </ul>
+      </div>
+      </section>
+      })}
+      </div>
       {!formOpen && error && <p className="project-create-error" role="alert">{error}</p>}
       <div className="sidebar-footer">
         <button className="settings-open" onClick={onOpenSkills}>{t('skills')}</button>

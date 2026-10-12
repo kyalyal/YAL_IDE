@@ -25,7 +25,7 @@ vi.mock('electron', () => ({
 vi.mock('../src/main/cliCheck', () => ({ checkCli: async () => ({ installed: false }), defaultRunner: vi.fn() }))
 vi.mock('../src/main/hookSetup', () => ({ installHooks: () => ({ statusDir: join(state.userData, 'status'), settingsPath: '' }) }))
 vi.mock('../src/main/ptyAdapter', () => ({ spawnPty: state.spawn }))
-vi.mock('../src/main/skillsRuntime', () => ({ startSkillsSystem: () => ({ store: { rootDir: '' }, toolPath: '', resync() {}, schedule() {} }) }))
+vi.mock('../src/main/skillsRuntime', () => ({ startSkillsSystem: () => ({ stores: { dev: { rootDir: '' }, planning: { rootDir: '' } }, toolPath: '', resync() {}, schedule() {} }) }))
 const originalExit = new Set(process.listeners('exit'))
 const originalException = new Set(process.listeners('uncaughtException'))
 let root: string

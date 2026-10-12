@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, sep } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -25,6 +25,85 @@ function makeDir(name: string): string {
 }
 
 describe('ProjectRegistry', () => {
+  it('loads legacy and invalid kinds as dev without losing records or metadata', () => {
+    const records = [undefined, 'invalid', null, 42, 'planning'].map((kind, index) => ({
+      id: `legacy-${index}`, name: `legacy-${index}`, path: makeDir(`legacy-${index}`),
+      addedAt: '2026-01-01', pinned: index === 0, ...(kind === undefined ? {} : { kind })
+    }))
+    mkdirSync(dirname(file), { recursive: true })
+    writeFileSync(file, JSON.stringify(records))
+    const reg = new ProjectRegistry(file)
+    expect(reg.list().map(p => p.kind)).toEqual(['dev', 'dev', 'dev', 'dev', 'planning'])
+    expect(reg.get('legacy-0')).toMatchObject({ ...records[0], kind: 'dev' })
+    reg.setPinned('legacy-0', false)
+    expect(JSON.parse(readFileSync(file, 'utf8'))).toEqual(records.map(p => ({ ...p, pinned: false, kind: p.kind === 'planning' ? 'planning' : 'dev' })))
+  })
+
+  it('adds and persists planning projects while defaulting new projects to dev', () => {
+    const reg = new ProjectRegistry(file)
+    expect(reg.add(makeDir('dev')).kind).toBe('dev')
+    const planning = reg.add(makeDir('planning'), 'planning')
+    expect(planning.kind).toBe('planning')
+    expect(new ProjectRegistry(file).list().map(p => p.kind)).toEqual(['dev', 'planning'])
+  })
+
+  it('persists dev to planning links and removes the property when cleared', () => {
+    const reg = new ProjectRegistry(file)
+    const dev = reg.add(makeDir('dev'))
+    const planning = reg.add(makeDir('planning'), 'planning')
+    reg.setLinkedPlanning(dev.id, planning.id)
+    expect(new ProjectRegistry(file).get(dev.id)?.linkedPlanningId).toBe(planning.id)
+    reg.setLinkedPlanning(dev.id, null)
+    expect(reg.get(dev.id)).not.toHaveProperty('linkedPlanningId')
+    expect(new ProjectRegistry(file).get(dev.id)).not.toHaveProperty('linkedPlanningId')
+  })
+
+  it('rejects invalid link directions and missing projects without replacing a valid link', () => {
+    const reg = new ProjectRegistry(file)
+    const dev = reg.add(makeDir('dev'))
+    const planning = reg.add(makeDir('planning'), 'planning')
+    reg.setLinkedPlanning(dev.id, planning.id)
+    expect(() => reg.setLinkedPlanning(dev.id, dev.id)).toThrow('Invalid link')
+    expect(() => reg.setLinkedPlanning(planning.id, planning.id)).toThrow('Invalid link')
+    expect(() => reg.setLinkedPlanning(planning.id, dev.id)).toThrow('Invalid link')
+    expect(() => reg.setLinkedPlanning(planning.id, null)).toThrow('Invalid link')
+    expect(() => reg.setLinkedPlanning('missing', planning.id)).toThrow(ProjectNotFoundError)
+    expect(() => reg.setLinkedPlanning(dev.id, 'missing')).toThrow(ProjectNotFoundError)
+    expect(() => reg.setLinkedPlanning('missing', null)).toThrow(ProjectNotFoundError)
+    expect(new ProjectRegistry(file).get(dev.id)?.linkedPlanningId).toBe(planning.id)
+  })
+
+  it('clears all links to a removed planning project while preserving other links', () => {
+    const reg = new ProjectRegistry(file)
+    const planning = reg.add(makeDir('planning'), 'planning')
+    const other = reg.add(makeDir('other'), 'planning')
+    const devs = ['a', 'b', 'c'].map(name => reg.add(makeDir(name)))
+    reg.setLinkedPlanning(devs[0].id, planning.id)
+    reg.setLinkedPlanning(devs[1].id, planning.id)
+    reg.setLinkedPlanning(devs[2].id, other.id)
+    reg.remove(planning.id)
+    const reloaded = new ProjectRegistry(file)
+    for (const dev of devs.slice(0, 2)) {
+      expect(reg.get(dev.id)).not.toHaveProperty('linkedPlanningId')
+      expect(reloaded.get(dev.id)).not.toHaveProperty('linkedPlanningId')
+    }
+    expect(reloaded.get(devs[2].id)?.linkedPlanningId).toBe(other.id)
+    expect(existsSync(planning.path)).toBe(true)
+  })
+
+  it('does not publish link changes or removal cleanup when persistence fails', () => {
+    const reg = new ProjectRegistry(file)
+    const dev = reg.add(makeDir('dev'))
+    const planning = reg.add(makeDir('planning'), 'planning')
+    reg.setLinkedPlanning(dev.id, planning.id)
+    mkdirSync(`${file}.tmp`)
+    expect(() => reg.setLinkedPlanning(dev.id, null)).toThrow()
+    expect(() => reg.remove(planning.id)).toThrow()
+    expect(reg.get(dev.id)?.linkedPlanningId).toBe(planning.id)
+    expect(reg.get(planning.id)).toBeDefined()
+    expect(new ProjectRegistry(file).get(dev.id)?.linkedPlanningId).toBe(planning.id)
+  })
+
   it('does not publish registration or pin changes when atomic persistence fails', () => {
     const reg = new ProjectRegistry(file)
     const a = reg.add(makeDir('persisted'))

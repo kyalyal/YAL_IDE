@@ -1,11 +1,13 @@
 import { watch, type FSWatcher } from 'node:fs'
-import { join } from 'node:path'
 import { app, BrowserWindow, ipcMain } from 'electron'
 import { SkillStore } from './skillStore'
 import { SkillSync } from './skillSync'
-import { installBuiltins, installSkillTool } from './skillsSetup'
+import { BUILTIN_SKILLS, installBuiltins, installSkillTool } from './skillsSetup'
 import { openSkillsWindow } from './skillsWindow'
-import { SKILLS_IPC, type SkillSyncResult, type SkillSyncStatus, type SkillLogOptions } from '../shared/skills'
+import { SKILLS_IPC, type SkillSyncStatus, type SkillLogOptions } from '../shared/skills'
+import { migrateLegacySkills, spaceDir, type SkillSpace } from './spaces'
+import type { ProjectKind } from '../shared/types'
+import type { SkillSpaceSyncStatus } from '../shared/skills'
 import type { Lang } from '../shared/i18n'
 
 // Only canonical files and top-level skill folder creation/removal affect sync.
@@ -19,67 +21,93 @@ export function initialSyncStatus(): SkillSyncStatus {
   return { lastSyncAt: null, state: 'never', skills: 0, projects: { total: 0, applied: 0, failed: 0 }, conflicts: [], failures: [] }
 }
 
-export function startSkillsSystem(userData: string, projects: () => { path: string }[], mainWindow: () => BrowserWindow | null, language: () => Lang) {
-  const store = new SkillStore(join(userData, 'skills'))
-  const builtinErrors = installBuiltins(store)
+export function startSkillsSystem(userData: string, projects: () => { path: string; kind: ProjectKind }[], mainWindow: () => BrowserWindow | null, language: () => Lang) {
+  migrateLegacySkills(userData)
   const toolPath = installSkillTool(userData)
-  const sync = new SkillSync(store)
-  let syncStatus = initialSyncStatus()
-  const broadcast = (): void => {
+  const spaces: SkillSpace[] = ['planning', 'dev']
+  const stores: Record<SkillSpace, SkillStore> = {
+    planning: new SkillStore(spaceDir(userData, 'planning')),
+    dev: new SkillStore(spaceDir(userData, 'dev'))
+  }
+  const broadcast = (status: SkillSpaceSyncStatus): void => {
     for (const window of BrowserWindow.getAllWindows()) {
       if (!window.isDestroyed() && !window.webContents.isDestroyed()) {
         window.webContents.send(SKILLS_IPC.changed)
-        window.webContents.send(SKILLS_IPC.syncStatus, syncStatus)
+        window.webContents.send(SKILLS_IPC.syncStatus, status)
       }
     }
   }
-  const resync = (): SkillSyncResult => {
-    let currentProjects: { path: string }[] = []
+  let closed = false
+  const runtimes = spaces.map(space => {
+    const store = stores[space]
+    const builtinErrors = installBuiltins(store, BUILTIN_SKILLS[space])
+    const sync = new SkillSync(store)
+    const ownProjects = () => projects().filter(project => project.kind === space)
+    let syncStatus: SkillSpaceSyncStatus = { ...initialSyncStatus(), space }
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let watcher: FSWatcher | undefined
+    const resync = (): void => {
+      if (closed) return
+      let currentProjects: { path: string }[] = []
+      try {
+        currentProjects = ownProjects()
+        const result = sync.sync(currentProjects)
+        syncStatus = { ...result.status, space }
+        if (builtinErrors.length) {
+          syncStatus.failures = [...syncStatus.failures, ...builtinErrors.map(reason => ({ project: store.rootDir, reason }))].slice(-20)
+          syncStatus.state = syncStatus.projects.applied > 0 ? 'partial' : 'error'
+        }
+      } catch (error) {
+        const errors = [...builtinErrors, (error as Error).message]
+        syncStatus = { ...initialSyncStatus(), space, lastSyncAt: new Date().toISOString(), state: 'error',
+          projects: { total: currentProjects.length, applied: 0, failed: currentProjects.length },
+          failures: (currentProjects.length ? currentProjects : [{ path: store.rootDir }]).flatMap(project => errors.map(reason => ({ project: project.path, reason }))).slice(-20) }
+      } finally { broadcast(syncStatus) }
+    }
+    const schedule = (): void => {
+      if (closed) return
+      if (timer) clearTimeout(timer)
+      timer = setTimeout(() => { timer = undefined; resync() }, 200)
+      timer.unref()
+    }
+    resync()
+    // Each watcher schedules only its own space, never the other store.
     try {
-      currentProjects = projects()
-      const result = sync.sync(currentProjects)
-      result.errors.push(...builtinErrors)
-      syncStatus = result.status
-      if (builtinErrors.length) {
-        syncStatus.failures = [...syncStatus.failures, ...builtinErrors.map(reason => ({ project: store.rootDir, reason }))].slice(-20)
-        syncStatus.state = syncStatus.projects.applied > 0 ? 'partial' : 'error'
-      }
-      return result
-    } catch (error) {
-      const errors = [...builtinErrors, (error as Error).message]
-      syncStatus = { ...initialSyncStatus(), lastSyncAt: new Date().toISOString(), state: 'error',
-        projects: { total: currentProjects.length, applied: 0, failed: currentProjects.length },
-        failures: (currentProjects.length ? currentProjects : [{ path: store.rootDir }]).flatMap(project => errors.map(reason => ({ project: project.path, reason }))).slice(-20) }
-      return { updated: 0, removed: 0, conflicts: 0, applied: {}, errors, status: syncStatus }
-    } finally { broadcast() }
+      watcher = watch(store.rootDir, { recursive: true }, (_event, file) => {
+        if (shouldSyncSkillPath(file === null ? null : String(file))) schedule()
+      })
+      watcher.unref()
+      watcher.on('error', error => console.error(`Shared skill watch failed (${space}):`, error))
+    } catch (error) { console.error(`Shared skill watch unavailable (${space}):`, error) }
+    return { space, store, sync, ownProjects, status: () => syncStatus, resync, schedule,
+      close: (): void => { watcher?.close(); if (timer) clearTimeout(timer) } }
+  })
+  const forSpace = (space: SkillSpace) => {
+    const runtime = runtimes.find(runtime => runtime.space === space)
+    if (!runtime) throw new Error('Invalid skill space')
+    return runtime
   }
-  resync()
-  ipcMain.handle(SKILLS_IPC.list, () => store.list().map(skill => ({ ...skill, appliedProjects: sync.appliedProjects(skill, projects()) })))
-  ipcMain.handle(SKILLS_IPC.get, (_event, name: string) => store.get(name))
-  ipcMain.handle(SKILLS_IPC.history, (_event, name: string) => store.history(name))
-  ipcMain.handle(SKILLS_IPC.readVersion, (_event, name: string, version: number) => store.readVersion(name, version))
-  ipcMain.handle(SKILLS_IPC.log, (_event, limit?: number, options?: SkillLogOptions & { includeCount?: boolean }) => {
+  ipcMain.handle(SKILLS_IPC.list, (_event, space: SkillSpace) => {
+    const { store, sync, ownProjects } = forSpace(space)
+    return store.list().map(skill => ({ ...skill, appliedProjects: sync.appliedProjects(skill, ownProjects()) }))
+  })
+  ipcMain.handle(SKILLS_IPC.get, (_event, space: SkillSpace, name: string) => forSpace(space).store.get(name))
+  ipcMain.handle(SKILLS_IPC.history, (_event, space: SkillSpace, name: string) => forSpace(space).store.history(name))
+  ipcMain.handle(SKILLS_IPC.readVersion, (_event, space: SkillSpace, name: string, version: number) => forSpace(space).store.readVersion(name, version))
+  ipcMain.handle(SKILLS_IPC.log, (_event, space: SkillSpace, limit?: number, options?: SkillLogOptions & { includeCount?: boolean }) => {
+    const store = forSpace(space).store
     const entries = store.log(limit, options)
     return options?.includeCount ? { entries, total: store.logCount() } : entries
   })
-  ipcMain.handle(SKILLS_IPC.syncStatus, () => syncStatus)
+  ipcMain.handle(SKILLS_IPC.syncStatus, (_event, space: SkillSpace) => forSpace(space).status())
   ipcMain.handle(SKILLS_IPC.openWindow, () => { const owner = mainWindow(); if (owner && !owner.isDestroyed()) openSkillsWindow(owner, language()) })
-  let timer: ReturnType<typeof setTimeout> | undefined
-  let watcher: FSWatcher | undefined
-  const schedule = (): void => {
-    if (timer) clearTimeout(timer)
-    timer = setTimeout(() => { timer = undefined; try { resync() } catch (error) { console.error('Shared skill sync failed:', error) } }, 200)
-    timer.unref()
+  const resync = (): void => { for (const runtime of runtimes) runtime.resync() }
+  const schedule = (): void => { for (const runtime of runtimes) runtime.schedule() }
+  const close = (): void => {
+    if (closed) return
+    closed = true
+    for (const runtime of runtimes) runtime.close()
   }
-  // Recursive watch covers CLI writes to existing skills and first-time folders on Windows.
-  try {
-    watcher = watch(store.rootDir, { recursive: true }, (_event, file) => {
-      if (shouldSyncSkillPath(file === null ? null : String(file))) schedule()
-    })
-    watcher.unref()
-    watcher.on('error', error => console.error('Shared skill watch failed:', error))
-  } catch (error) { console.error('Shared skill watch unavailable:', error) }
-  const close = (): void => { watcher?.close(); if (timer) clearTimeout(timer) }
   app.on('before-quit', close)
-  return { store, toolPath, resync, schedule, close }
+  return { stores, toolPath, resync, schedule, close }
 }

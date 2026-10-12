@@ -485,9 +485,12 @@ function appendSkillLog(store, entry) {
 }
 function isSkillStoreBusy(store) { return !store.recoverLock() }
 function runCli(args, env = process.env) {
+  const [command, ...rest] = args
+  if ((command === 'set' || command === 'remove') && !rest.includes('--approved')) {
+    throw new Error('Skill changes require user approval. Ask the user whether to update the skill, then rerun with --approved.')
+  }
   if (!env.YAL_SKILLS_DIR) throw new Error('YAL_SKILLS_DIR is required')
   const store = new SkillStore(env.YAL_SKILLS_DIR)
-  const [command, ...rest] = args
   const option = (flag, required = false) => {
     const index = rest.indexOf(flag), value = index < 0 ? undefined : rest[index + 1]
     if ((required || index >= 0) && (!value || value.startsWith('--'))) throw new Error(`${flag} requires a value`)
@@ -504,7 +507,7 @@ function runCli(args, env = process.env) {
     if (!['claude', 'gpt'].includes(author)) throw new Error('--author must be claude or gpt')
     const mutation = { name: rest[0], summary: option('--summary', true), author }
     value = command === 'set' ? store.apply({ ...mutation, content: nativeFs.readFileSync(option('--file', true), 'utf8') }) : store.remove(mutation)
-  } else throw new Error('Usage: list | show <name> | set <name> --file <path> --summary <text> [--author claude|gpt] | remove <name> --summary <text> | log [--limit n]')
+  } else throw new Error('Usage: list | show <name> | set <name> --approved --file <path> --summary <text> [--author claude|gpt] | remove <name> --approved --summary <text> | log [--limit n]')
   process.stdout.write(JSON.stringify(value, null, 2) + '\n')
 }
 module.exports = { SkillStore, appendSkillLog, isSkillStoreBusy, validateName, validateContent, lineChanges, runCli,

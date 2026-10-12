@@ -2,6 +2,12 @@ import { describe, expect, it } from 'vitest'
 import { MESSAGES, translate } from '../src/shared/i18n'
 
 describe('i18n', () => {
+  it('provides planning, dev, link and master labels in both languages', () => {
+    for (const key of ['planning', 'dev', 'newPlanningProject', 'planningLink', 'noPlanningLink', 'masterMd', 'openFile', 'skillSpace']) {
+      expect(MESSAGES.ko).toHaveProperty(key)
+      expect(MESSAGES.en).toHaveProperty(key)
+    }
+  })
   it('has exactly matching keys and non-empty translations', () => {
     expect(Object.keys(MESSAGES.ko).sort()).toEqual(Object.keys(MESSAGES.en).sort())
     for (const messages of Object.values(MESSAGES)) {
