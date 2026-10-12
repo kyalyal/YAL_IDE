@@ -35,4 +35,15 @@ describe('hasClaudeSession', () => {
     writeFileSync(join(dir, 'abc.jsonl'), '{}')
     expect(hasClaudeSession('/work/proj', home)).toBe(true)
   })
+
+  it('ignores transcripts recorded for another project that shares the same folder name', () => {
+    const a = 'D:\\클로드프로젝트\\게임기획구축'
+    const b = 'D:\\클로드프로젝트\\개발-머지런'
+    const dir = join(home, 'projects', claudeProjectDirName(a))
+    expect(claudeProjectDirName(a)).toBe(claudeProjectDirName(b))
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(join(dir, 'abc.jsonl'), JSON.stringify({ cwd: a }) + '\n')
+    expect(hasClaudeSession(b, home)).toBe(false)
+    expect(hasClaudeSession(a, home)).toBe(true)
+  })
 })
