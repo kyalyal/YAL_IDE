@@ -203,3 +203,38 @@ it('reads and opens MASTER, propagates open errors, debounces saves and closes o
   expect(readFileSync(copy, 'utf8')).toBe('changed master')
   vi.useRealTimers()
 })
+
+it('registers planning actions and cleans actual link changes and planning deletion', async () => {
+  for (const channel of ['planning:sync-status', 'planning:apply', 'planning:mark-synced', 'planning:set-baseline']) expect(state.handlers.get(channel)).toBeTypeOf('function')
+  const dev = call(IPC.createProject, 'sync-dev').project
+  const other = call(IPC.createProject, 'sync-dev-2').project
+  const plan = call(IPC.createProject, 'sync-plan', 'planning').project
+  writeFileSync(join(plan.path, 'plan.md'), 'first')
+  expect(call('planning:sync-status', dev.id)).toEqual({ linked: false })
+  for (const project of [dev, other]) {
+    call(IPC.setLinkedPlanning, project.id, plan.id)
+    expect(call('planning:set-baseline', project.id)).toEqual({ ok: true })
+  }
+  writeFileSync(join(plan.path, 'plan.md'), 'second')
+  expect(await call('planning:apply', dev.id)).toMatchObject({ ok: false, reason: 'terminal-not-running' })
+  const changes = join(dev.path, '.claude/yal-planning-changes.md')
+  expect(existsSync(changes)).toBe(false)
+  expect(call(IPC.startTerminal, dev.id, 80, 24).ok).toBe(true)
+  expect(call('planning:apply', dev.id)).toEqual({ ok: true, count: 1 })
+  call(IPC.setLinkedPlanning, dev.id, plan.id)
+  expect(call('planning:sync-status', dev.id).pending).toBe(true)
+  expect(existsSync(changes)).toBe(true)
+  call(IPC.setLinkedPlanning, dev.id, null)
+  expect(existsSync(changes)).toBe(false)
+  expect(existsSync(join(state.userData, 'planning-sync', dev.id))).toBe(false)
+  call(IPC.setLinkedPlanning, dev.id, plan.id)
+  expect(call('planning:sync-status', dev.id).state).toBe('no-baseline')
+  call('planning:set-baseline', dev.id)
+  call(IPC.removeProject, plan.id)
+  for (const project of [dev, other]) {
+    expect(existsSync(join(state.userData, 'planning-sync', project.id))).toBe(false)
+    expect(call('planning:sync-status', project.id)).toEqual({ linked: false })
+  }
+  call(IPC.removeProject, dev.id)
+  call(IPC.removeProject, other.id)
+})

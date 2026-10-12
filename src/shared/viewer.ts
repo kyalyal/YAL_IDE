@@ -120,3 +120,31 @@ export function fitScale(
   if (available.width <= 0 || available.height <= 0) return 1
   return Math.min(1, available.width / viewport.width, available.height / viewport.height)
 }
+
+export function sameViewerBounds(a: ViewerBounds | undefined, b: ViewerBounds): boolean {
+  return !!a && a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height
+}
+
+export function sameViewerSettings(a: ViewerSettings, b: ViewerSettings): boolean {
+  return a.deviceId === b.deviceId && a.orientation === b.orientation && a.touch === b.touch
+}
+
+export interface DeviceEmulationInput {
+  width: number
+  height: number
+  scale: number
+  dpr: number
+}
+
+export function sameDeviceEmulation(a: DeviceEmulationInput | undefined, b: DeviceEmulationInput): boolean {
+  return !!a && a.width === b.width && a.height === b.height && a.scale === b.scale && a.dpr === b.dpr
+}
+
+export function roundedViewerBounds(bounds: ViewerBounds): ViewerBounds | null {
+  const rounded = {
+    x: Math.round(bounds.x), y: Math.round(bounds.y),
+    width: Math.round(bounds.width), height: Math.round(bounds.height)
+  }
+  return Object.values(rounded).every(Number.isFinite) && rounded.width > 0 && rounded.height > 0
+    ? rounded : null
+}

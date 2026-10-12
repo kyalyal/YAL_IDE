@@ -1,14 +1,18 @@
 import { useCallback, useEffect, useRef, useState, type ReactElement } from 'react'
-import type { AddProjectResult, CliStatus, ProjectKind, ProjectStatus, ProjectView, ProvisionResult } from '../../shared/types'
+import type { AddProjectResult, CliStatus, ProjectKind, ProjectActivity, ProjectStatus, ProjectView, ProvisionResult } from '../../shared/types'
 import { EnvBanner, ProvisionBanner, SetupGuide } from './components/Notices'
 import { ProjectList } from './components/ProjectList'
 import { TerminalView } from './components/TerminalView'
 import { GptLogPane } from './components/GptLogPane'
 import { ViewerPane } from './components/ViewerPane'
 import { clampViewerWidth } from './viewerState'
+import { clampSidebarWidth, parseSidebarWidth } from './sidebarState'
 import type { AppSettings } from '../../shared/settings'
-import { shouldPlay } from './sound/notifyRules'
+import { reduceNotifications, type NotificationMemory } from './sound/notifyRules'
 import { playSound } from './sound/soundEngine'
+import { deriveActivity, activityLabel, elapsedLabel } from './activityState'
+import { planningSyncView, type PlanningAction } from './planningSyncState'
+import { planningIdentity, usePlanningSync } from './usePlanningSync'
 import { useI18n } from './i18n/I18nProvider'
 
 export function App() {
@@ -21,7 +25,20 @@ export function App() {
   const [provision, setProvision] = useState<{ name: string; result: ProvisionResult } | null>(null)
   const [message, setMessage] = useState<string | { key: 'settingsOpenError' | 'skillsOpenError' }>('')
   const settingsRef = useRef<AppSettings | null>(null)
-  const previousStatuses = useRef<Record<string, ProjectStatus>>({})
+  const [activities, setActivities] = useState<Record<string, ProjectActivity>>({})
+  const activityRef = useRef<Record<string, ProjectActivity>>({})
+  const notifications = useRef<NotificationMemory>({})
+  const [pendingIds, setPendingIds] = useState<string[]>([])
+  const [now, setNow] = useState(Date.now)
+  const removedIds = useRef(new Set<string>())
+  const acknowledgementRevision = useRef<Record<string, number>>({})
+  const updateNotifications = useCallback((next: Record<string, ProjectActivity>, time: number) => {
+    const sound = settingsRef.current?.sound
+    const result = reduceNotifications(notifications.current, next, time, sound)
+    notifications.current = result.memory
+    setPendingIds(result.pendingIds)
+    if (sound) result.playIds.forEach(() => { void playSound(sound.soundId, sound.volume) })
+  }, [])
 
   useEffect(() => {
     let active = true
@@ -50,9 +67,37 @@ export function App() {
     return clampViewerWidth(width, window.innerWidth)
   })
   const [dragging, setDragging] = useState(false)
+  const [sidebarWidth, setSidebarWidth] = useState(() => {
+    try { return parseSidebarWidth(localStorage.getItem('yal.sidebar.width'), window.innerWidth) }
+    catch { return clampSidebarWidth(260, window.innerWidth) }
+  })
+  const [sidebarMax, setSidebarMax] = useState(() => clampSidebarWidth(480, window.innerWidth))
+  const [sidebarDragging, setSidebarDragging] = useState(false)
+  const [spaceDragging, setSpaceDragging] = useState(false)
+  const sidebarDrag = useRef<{ id: number; target: HTMLDivElement; left: number; offset: number } | null>(null)
+  function finishSidebarDrag(pointerId: number) {
+    const drag = sidebarDrag.current
+    if (!drag || drag.id !== pointerId) return
+    sidebarDrag.current = null
+    if (drag.target.hasPointerCapture(drag.id)) drag.target.releasePointerCapture(drag.id)
+    setSidebarDragging(false)
+  }
+  useEffect(() => () => {
+    const drag = sidebarDrag.current
+    sidebarDrag.current = null
+    if (drag?.target.hasPointerCapture(drag.id)) drag.target.releasePointerCapture(drag.id)
+  }, [])
+  useEffect(() => {
+    try { localStorage.setItem('yal.sidebar.width', String(sidebarWidth)) } catch { /* Keep in-memory width. */ }
+    window.dispatchEvent(new Event('yal-viewer-layout'))
+  }, [sidebarWidth])
 
   useEffect(() => {
-    const resize = () => setViewerWidth((width) => clampViewerWidth(width, window.innerWidth))
+    const resize = () => {
+      setViewerWidth((width) => clampViewerWidth(width, window.innerWidth))
+      setSidebarWidth((width) => clampSidebarWidth(width, window.innerWidth))
+      setSidebarMax(clampSidebarWidth(480, window.innerWidth))
+    }
     window.addEventListener('resize', resize)
     return () => window.removeEventListener('resize', resize)
   }, [])
@@ -72,30 +117,43 @@ export function App() {
   useEffect(() => {
     let active = true
     let polling = false
+    let lastSuccess: number | null = null
+    const suspendGrace = () => {
+      for (const entry of Object.values(notifications.current)) entry.falseSince = null
+    }
     const poll = async () => {
       if (polling) return
       polling = true
+      const revisions = { ...acknowledgementRevision.current }
       try {
-        const [running, next] = await Promise.all([
-          window.yal.runningTerminals(), window.yal.projectStatuses()
+        const [running, received] = await Promise.all([
+          window.yal.runningTerminals(), window.yal.projectActivity()
         ])
         if (!active) return
-        const sound = settingsRef.current?.sound
-        for (const [id, status] of Object.entries(next)) {
-          if (sound && shouldPlay(previousStatuses.current[id], status, sound)) {
-            void playSound(sound.soundId, sound.volume)
-          }
-        }
-        previousStatuses.current = next
+        const time = Date.now()
+        if (lastSuccess !== null && time - lastSuccess > 1500) suspendGrace()
+        const next = Object.fromEntries(Object.entries(received).filter(([id]) => !removedIds.current.has(id)).map(([id, activity]) =>
+          [id, (revisions[id] ?? 0) !== (acknowledgementRevision.current[id] ?? 0) ? activityRef.current[id] ?? activity : activity]))
+        lastSuccess = time
+        activityRef.current = next
+        updateNotifications(next, time)
         setRunningIds(running)
-        setStatuses(next)
-      } catch { /* Retry on the next poll; keep the last observed statuses. */ }
-      finally { polling = false }
+        setActivities(next)
+        setStatuses(Object.fromEntries(Object.entries(next).map(([id, activity]) => [id, activity.status])))
+      } catch {
+        // Retain displayed activity; a failed observation cannot establish GPT completion.
+        if (active) { lastSuccess = null; suspendGrace() }
+      } finally { polling = false }
     }
     void poll()
-    const t = setInterval(() => void poll(), 1000)
-    return () => { active = false; clearInterval(t) }
-  }, [])
+    const timer = setInterval(() => {
+      const time = Date.now()
+      setNow(time)
+      // Advance alarm grace only after a fresh successful poll, never before its result.
+      void poll()
+    }, 1000)
+    return () => { active = false; clearInterval(timer) }
+  }, [updateNotifications])
 
   // Acknowledge done only when the user clicks the project, including the selected one.
   // Completion while selected stays visible until another click or the next prompt.
@@ -103,6 +161,12 @@ export function App() {
     setSelectedId(id)
     if (statuses[id] === 'done') {
       void window.yal.acknowledgeProject(id)
+      acknowledgementRevision.current[id] = (acknowledgementRevision.current[id] ?? 0) + 1
+      const next = { ...activityRef.current, [id]: { ...activityRef.current[id], status: 'idle' as const } }
+      activityRef.current = next
+      setActivities(next)
+      notifications.current[id] = { previous: 'idle', notified: false, falseSince: null }
+      setPendingIds(ids => ids.filter(pending => pending !== id))
       setStatuses((s) => ({ ...s, [id]: 'idle' }))
     }
   }
@@ -126,11 +190,51 @@ export function App() {
     )
     if (!ok) return
     await window.yal.removeProject(p.id)
+    removedIds.current.add(p.id)
+    delete notifications.current[p.id]
+    delete acknowledgementRevision.current[p.id]
+    const next = { ...activityRef.current }
+    delete next[p.id]
+    activityRef.current = next
+    setActivities(next)
+    setStatuses(s => { const nextStatuses = { ...s }; delete nextStatuses[p.id]; return nextStatuses })
+    setPendingIds(ids => ids.filter(id => id !== p.id))
     if (selectedId === p.id) setSelectedId(null)
     await refresh()
   }
 
   const selected = projects.find((p) => p.id === selectedId) ?? null
+  const planning = usePlanningSync(projects, selectedId)
+  const planningView = planningSyncView(planning.status, planning.status.linked && !('error' in planning.status) && planning.status.pending)
+  const [planningActionBusy, setPlanningActionBusy] = useState(false)
+  const planningActionGuard = useRef(false)
+  const actionSelection = useRef('')
+  actionSelection.current = selected ? planningIdentity(selected, projects) : ''
+  const mounted = useRef(true)
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false } }, [])
+  async function handlePlanningAction(action: PlanningAction) {
+    if (!selected || planningActionGuard.current) return
+    const id = selected.id, identity = actionSelection.current
+    planningActionGuard.current = true
+    setPlanningActionBusy(true)
+    setMessage('')
+    planning.invalidate(id)
+    try {
+      const result = await (action === 'markSynced' ? window.yal.markPlanningSynced(id)
+        : action === 'setBaseline' ? window.yal.setPlanningBaseline(id) : window.yal.applyPlanningChanges(id))
+      if (!result.ok && mounted.current && actionSelection.current === identity) {
+        setMessage(result.reason === 'busy' ? t('planningBusy') : result.reason === 'terminal-not-running' ? t('planningTerminalOff')
+          : result.reason === 'no-changes' ? t('planningNoChanges') : result.reason === 'file-conflict' ? t('planningFileConflict', { message: result.message ?? '' }) : t('projectActionError'))
+      }
+    } catch {
+      if (mounted.current && actionSelection.current === identity) setMessage(t('projectActionError'))
+    } finally {
+      await planning.refresh(id)
+      planningActionGuard.current = false
+      if (mounted.current) setPlanningActionBusy(false)
+    }
+  }
+  const selectedActivity = selected ? deriveActivity(activities[selected.id] ?? { status: statuses[selected.id] ?? 'idle', lastActivityAt: 0, gptRunning: false, gptSince: null }, now) : null
   const viewerVisible = Boolean(selected?.exists && !viewerCollapsed)
 
   useEffect(() => {
@@ -156,12 +260,18 @@ export function App() {
   </GptLogPane>
 
   return (
-    <div className={`app${dragging ? ' viewer-dragging' : ''}`}>
+    <div className={`app${dragging ? ' viewer-dragging' : ''}${sidebarDragging ? ' sidebar-dragging' : ''}${spaceDragging ? ' space-dragging' : ''}`}>
       <ProjectList
+        style={{ width: sidebarWidth }}
+        onSpaceDraggingChange={setSpaceDragging}
         projects={projects}
         selectedId={selectedId}
         runningIds={runningIds}
         statuses={statuses}
+        activities={activities}
+        now={now}
+        pendingIds={pendingIds}
+        planningChanges={planning.planningChanges}
         onSelect={handleSelect}
         onAdd={kind => void handleAdd(undefined, kind).catch(() => setMessage(t('projectActionError')))}
         onCreate={handleAdd}
@@ -170,6 +280,35 @@ export function App() {
         onRemove={(p) => void handleRemove(p)}
         onOpenSettings={openSettings}
         onOpenSkills={() => void window.yalSkills.openWindow().catch(() => setMessage({ key: 'skillsOpenError' }))}
+      />
+      <div className="sidebar-splitter" role="separator" aria-label={t('sidebarWidth')}
+        aria-orientation="vertical" tabIndex={0} aria-valuemin={180}
+        aria-valuemax={sidebarMax} aria-valuenow={Math.round(sidebarWidth)}
+        onPointerDown={event => {
+          if (event.button !== 0 || sidebarDrag.current) return
+          const bounds = event.currentTarget.previousElementSibling?.getBoundingClientRect()
+          if (!bounds) return
+          event.preventDefault()
+          event.currentTarget.setPointerCapture(event.pointerId)
+          sidebarDrag.current = { id: event.pointerId, target: event.currentTarget,
+            left: bounds.left, offset: event.clientX - bounds.left - bounds.width }
+          setSidebarDragging(true)
+        }}
+        onPointerMove={event => {
+          const drag = sidebarDrag.current
+          if (!drag || drag.id !== event.pointerId || !event.currentTarget.hasPointerCapture(event.pointerId)) return
+          setSidebarWidth(clampSidebarWidth(event.clientX - drag.left - drag.offset, window.innerWidth))
+        }}
+        onPointerUp={event => finishSidebarDrag(event.pointerId)}
+        onPointerCancel={event => finishSidebarDrag(event.pointerId)}
+        onLostPointerCapture={event => finishSidebarDrag(event.pointerId)}
+        onKeyDown={event => {
+          if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+          event.preventDefault()
+          const delta = (event.key === 'ArrowRight' ? 1 : -1) * (event.shiftKey ? 50 : 10)
+          setSidebarWidth(width => clampSidebarWidth(width + delta, window.innerWidth))
+        }}
+        onDoubleClick={() => setSidebarWidth(clampSidebarWidth(260, window.innerWidth))}
       />
       <main className="main">
         {env && <EnvBanner statuses={env} />}
@@ -184,6 +323,16 @@ export function App() {
         {selected?.exists && (
           <div className="terminal-column-header">
             <span>{t('claudeTerminal')}</span>
+            {selectedActivity && <span className={'claude-activity status-label ' + selectedActivity.state}>
+              {activityLabel(selectedActivity, t)}
+              <span className="activity-elapsed">{elapsedLabel(selectedActivity.elapsedSeconds, t)}</span>
+            </span>}
+            {selectedId && pendingIds.includes(selectedId) && <span className="activity-deferred">{t('activityDeferred')}</span>}
+            {planningView.badge && <span className="planning-sync-badge">{t(planningView.badge.key, { count: planningView.badge.count ?? 0 })}</span>}
+            {planningView.actions.map(action => <button key={action} className="planning-sync-action" disabled={planningActionBusy}
+              onClick={() => { void handlePlanningAction(action) }}>
+              {t(action === 'apply' ? 'planningApply' : action === 'applyFull' ? 'planningApplyFull' : action === 'markSynced' ? 'planningMarkSynced' : 'planningSetBaseline')}
+            </button>)}
             <button className="viewer-toggle" aria-expanded={!viewerCollapsed}
               onClick={() => setViewerCollapsed((collapsed) => !collapsed)}>
               {t(viewerCollapsed ? 'showViewer' : 'hideViewer')}

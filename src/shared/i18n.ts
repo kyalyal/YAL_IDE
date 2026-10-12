@@ -1,6 +1,8 @@
 export type Lang = 'ko' | 'en'
 
 export type MessageKey =
+  | 'planningChanged' | 'planningListChanged' | 'planningNoBaseline' | 'planningClean' | 'planningPending' | 'planningApply' | 'planningApplyFull' | 'planningMarkSynced' | 'planningSetBaseline' | 'planningBusy' | 'planningTerminalOff' | 'planningNoChanges' | 'planningFileConflict'
+  | 'activityWaitingGpt' | 'activityQuiet' | 'activityNeedsInput' | 'activitySeconds' | 'activityMinutes' | 'activityDeferred' | 'activityElapsed'
   | 'planning' | 'dev' | 'newPlanningProject' | 'planningLink' | 'noPlanningLink' | 'masterMd' | 'openFile' | 'skillSpace'
   | 'addPlanningProject' | 'addDevProject' | 'masterError'
   | 'gptLogTitle' | 'gptRunning' | 'gptSuccess' | 'gptFailed' | 'gptWaiting' | 'gptStalled'
@@ -19,7 +21,7 @@ export type MessageKey =
   | 'console' | 'errorsOnly' | 'autoScroll' | 'clear' | 'errorCount' | 'noConsoleEntries'
   | 'saveStart' | 'retry' | 'hideViewer' | 'showViewer' | 'claudeTerminal'
   | 'portrait' | 'landscape' | 'switchPortrait' | 'switchLandscape'
-  | 'gameViewer' | 'viewerWidth' | 'device' | 'devCommand' | 'setDevCommand'
+  | 'sidebarWidth' | 'spaceRatio' | 'gameViewer' | 'viewerWidth' | 'device' | 'devCommand' | 'setDevCommand'
   | 'viewerEmpty' | 'errorHistory' | 'gameConsole' | 'consoleLog' | 'consoleInfo' | 'consoleWarn' | 'consoleDebug'
   | 'projects' | 'addProject' | 'noProjects' | 'addFolderHint' | 'working' | 'done' | 'attention'
   | 'idle' | 'noSession' | 'missingPath' | 'removeProject' | 'settingsShortcut'
@@ -44,6 +46,23 @@ export type MessageKey =
 
 export const MESSAGES: Record<Lang, Record<MessageKey, string>> = {
   ko: {
+    planningChanged: '기획 변경 {count}건',
+    planningListChanged: '기획 변경 {count}',
+    planningNoBaseline: '기획 기준점 없음',
+    planningClean: '기획 최신',
+    planningPending: '반영 완료 대기',
+    planningApply: '기획 변경 반영',
+    planningApplyFull: '기획 전체 비교 반영',
+    planningMarkSynced: '반영 완료',
+    planningSetBaseline: '현재 기획을 기준점으로',
+    planningBusy: 'Claude가 작업 중입니다. 끝난 뒤 다시 눌러주세요.',
+    planningTerminalOff: '터미널이 실행 중이 아닙니다.',
+    planningNoChanges: '반영할 기획 변경이 없습니다.',
+    planningFileConflict: '기획 변경 파일 충돌: {message}',
+
+    activityWaitingGpt: 'GPT 결과 대기 중', activityQuiet: '응답 없음 · {count}분', activityNeedsInput: '입력 필요',
+    activitySeconds: '{count}초', activityMinutes: '{count}분', activityDeferred: '완료 알림 대기 중',
+    activityElapsed: '{duration} 경과',
     gptLogTitle: 'GPT 작업 로그', gptRunning: '실행 중', gptSuccess: '완료', gptFailed: '실패',
     gptWaiting: '대기 중', gptStalled: '중단됨',
     gptLogEmpty: 'Claude가 scripts/gpt.sh로 GPT에게 작업을 시키면 여기에 진행 상황이 표시됩니다',
@@ -150,6 +169,7 @@ export const MESSAGES: Record<Lang, Record<MessageKey, string>> = {
     console: '콘솔', errorsOnly: '오류만 보기', autoScroll: '자동 스크롤', clear: '지우기', errorCount: '오류 {count}개', noConsoleEntries: '콘솔 항목이 없습니다',
     saveStart: '저장 후 시작', retry: '다시 시도', hideViewer: '뷰어 숨기기', showViewer: '뷰어 보기', claudeTerminal: 'Claude 터미널',
     portrait: '세로 모드 ↻', landscape: '가로 모드 ↻', switchPortrait: '눌러서 세로 모드로 전환', switchLandscape: '눌러서 가로 모드로 전환',
+    sidebarWidth: '사이드바 너비', spaceRatio: '기획 공간 비율',
     gameViewer: '게임 뷰어', viewerWidth: '뷰어 너비', device: '기기', devCommand: '개발 서버 명령', setDevCommand: '개발 서버 명령을 설정하세요.',
     viewerEmpty: '개발 서버를 시작하면 게임이 여기에 표시됩니다', errorHistory: '보관된 콘솔 기록의 오류', gameConsole: '게임 콘솔',
     consoleLog: '로그', consoleInfo: '정보', consoleWarn: '경고', consoleDebug: '디버그',
@@ -170,6 +190,23 @@ export const MESSAGES: Record<Lang, Record<MessageKey, string>> = {
     previewSound: '{name} 미리 듣기', volume: '음량', soundAttention: '입력이 필요할 때도 소리 내기', testSound: '테스트 재생'
   },
   en: {
+    planningChanged: 'Planning changes: {count}',
+    planningListChanged: 'Planning changes: {count}',
+    planningNoBaseline: 'No planning baseline',
+    planningClean: 'Planning up to date',
+    planningPending: 'Awaiting completion',
+    planningApply: 'Apply planning changes',
+    planningApplyFull: 'Compare and apply full planning',
+    planningMarkSynced: 'Mark synced',
+    planningSetBaseline: 'Use current planning as baseline',
+    planningBusy: 'Claude is working. Try again after it finishes.',
+    planningTerminalOff: 'The terminal is not running.',
+    planningNoChanges: 'There are no planning changes to apply.',
+    planningFileConflict: 'Planning changes file conflict: {message}',
+
+    activityWaitingGpt: 'Waiting for GPT results', activityQuiet: 'No response · {count} min', activityNeedsInput: 'Input needed',
+    activitySeconds: '{count} sec', activityMinutes: '{count} min', activityDeferred: 'Completion notification pending',
+    activityElapsed: '{duration} elapsed',
     gptLogTitle: 'GPT job log', gptRunning: 'Running', gptSuccess: 'Complete', gptFailed: 'Failed',
     gptWaiting: 'Waiting', gptStalled: 'Stalled',
     gptLogEmpty: 'When Claude assigns work to GPT through scripts/gpt.sh, its progress appears here.',
@@ -276,6 +313,7 @@ export const MESSAGES: Record<Lang, Record<MessageKey, string>> = {
     console: 'Console', errorsOnly: 'Errors only', autoScroll: 'Auto-scroll', clear: 'Clear', errorCount: '{count} errors', noConsoleEntries: 'No console entries',
     saveStart: 'Save & start', retry: 'Retry', hideViewer: 'Hide viewer', showViewer: 'Show viewer', claudeTerminal: 'Claude terminal',
     portrait: 'Portrait ↻', landscape: 'Landscape ↻', switchPortrait: 'Click to switch to portrait', switchLandscape: 'Click to switch to landscape',
+    sidebarWidth: 'Sidebar width', spaceRatio: 'Planning space ratio',
     gameViewer: 'Game viewer', viewerWidth: 'Viewer width', device: 'Device', devCommand: 'Dev server command', setDevCommand: 'Set a dev server command.',
     viewerEmpty: 'Start the dev server to display the game here', errorHistory: 'Errors in the retained console history', gameConsole: 'Game console',
     consoleLog: 'log', consoleInfo: 'info', consoleWarn: 'warn', consoleDebug: 'debug',

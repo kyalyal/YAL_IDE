@@ -20,6 +20,20 @@ export class StatusTracker {
     }
   }
 
+  detail(id: string): { state: ProjectStatus; ts: number } {
+    const file = this.file(id)
+    if (file) {
+      try {
+        const value = JSON.parse(readFileSync(file, 'utf8'))
+        return {
+          state: VALID.includes(value.state) ? value.state : 'idle',
+          ts: typeof value.ts === 'number' && Number.isFinite(value.ts) ? value.ts : 0
+        }
+      } catch { /* Missing/invalid files have no activity timestamp. */ }
+    }
+    return { state: 'idle', ts: 0 }
+  }
+
   statuses(ids: string[]): Record<string, ProjectStatus> {
     return Object.fromEntries(ids.map((id) => [id, this.get(id)]))
   }

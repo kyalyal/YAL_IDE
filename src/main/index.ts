@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
+import { app, BrowserWindow, clipboard, dialog, ipcMain, shell } from 'electron'
 import { existsSync, statSync, readdirSync, mkdirSync, readFileSync, realpathSync, watch, type FSWatcher } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { homedir } from 'node:os'
@@ -28,6 +28,8 @@ import { AppSettingsStore } from './settingsStore'
 import { openSettingsWindow } from './settingsWindow'
 import { startSkillsSystem } from './skillsRuntime'
 import { seedMaster, syncMaster, syncPlanningLinks } from './masterDoc'
+import { PlanningSync } from './planningSync'
+import { createPlanningSyncHandlers } from './planningSyncIpc'
 import { updateSkillsWindowTitle } from './skillsWindow'
 import { shouldQuitAfterWindowsClosed } from './viewerLifecycle'
 import { EXPORT_IPC, type ExportConfig, type ExportPlatform, type ToolInstallRequest } from '../shared/exporter'
@@ -81,8 +83,14 @@ function createWindow(): void {
 }
 
 app.whenReady().then(async () => {
+  ipcMain.handle(IPC.writeClipboardText, (_event, text: unknown) => {
+    if (typeof text !== 'string') throw new TypeError('Clipboard text must be a string.')
+    clipboard.writeText(text)
+  })
+  ipcMain.handle(IPC.readClipboardText, () => clipboard.readText())
   const userData = app.getPath('userData')
   const registry = new ProjectRegistry(join(userData, 'projects.json'))
+  const planningSync = new PlanningSync({ userData })
   const gptLogs = new GptLogWatcher(join(userData, 'gpt-logs'), nativeGptLogFs, event => {
     if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) win.webContents.send(GPT_LOG_IPC.append, event)
   })
@@ -234,7 +242,7 @@ app.whenReady().then(async () => {
     return kind
   }
   ipcMain.handle(IPC.setLinkedPlanning, (_event, devId: string, planningId: string | null) => {
-    registry.setLinkedPlanning(devId, planningId)
+    planningHandlers.setLinkedPlanning(devId, planningId)
     resyncProjects()
     return registry.list()
   })
@@ -411,6 +419,12 @@ app.whenReady().then(async () => {
     }
   )
 
+  const planningHandlers = createPlanningSyncHandlers({ registry, sync: planningSync, terminals, tracker })
+  ipcMain.handle(IPC.planningSyncStatus, (_event, devId: string) => planningHandlers.status(devId))
+  ipcMain.handle(IPC.planningApply, (_event, devId: string) => planningHandlers.apply(devId))
+  ipcMain.handle(IPC.planningMarkSynced, (_event, devId: string) => planningHandlers.markSynced(devId))
+  ipcMain.handle(IPC.planningSetBaseline, (_event, devId: string) => planningHandlers.setBaseline(devId))
+
   ipcMain.handle(IPC.listProjects, () => registry.list())
 
   ipcMain.handle(IPC.addProject, async (_event, kind?: ProjectKind): Promise<AddProjectResult> => {
@@ -443,6 +457,7 @@ app.whenReady().then(async () => {
 
   ipcMain.handle(IPC.removeProject, (_e, id: string) => {
     requireGptProject(id)
+    const planningCleanup = planningHandlers.projectsForRemoval(id)
     exporter.cancel(id)
     exportSettings.remove(id)
     devServers.stop(id)
@@ -455,6 +470,7 @@ app.whenReady().then(async () => {
     gptUpgrades.delete(id)
     tracker.reset(id)
     registry.remove(id)
+    planningHandlers.cleanupProjects(planningCleanup)
     resyncProjects()
   })
 
@@ -467,6 +483,15 @@ app.whenReady().then(async () => {
   ipcMain.handle(IPC.runningTerminals, () => terminals.runningIds())
 
   ipcMain.handle(IPC.projectStatuses, () => tracker.statuses(registry.list().map((p) => p.id)))
+  ipcMain.handle(IPC.projectActivity, () => {
+    gptLogs.poll()
+    const now = Date.now()
+    return Object.fromEntries(registry.list().map(({ id }) => {
+      const detail = tracker.detail(id)
+      return [id, { status: detail.state, lastActivityAt: detail.ts,
+        gptRunning: gptLogs.isGptRunning(id, now), gptSince: gptLogs.gptRunningSince(id) }]
+    }))
+  })
   ipcMain.handle(IPC.acknowledgeProject, (_e, id: string) => tracker.acknowledge(id))
 
   ipcMain.handle(
@@ -492,6 +517,7 @@ app.whenReady().then(async () => {
   )
 
   app.on('before-quit', () => {
+    planningHandlers.dispose()
     gptLogs.dispose()
     cleanupProcessTrees()
     devServers.stopAll()

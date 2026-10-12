@@ -2,8 +2,8 @@ import { WebContentsView, type BrowserWindow } from 'electron'
 import { canEmulate } from './viewerLifecycle'
 import { isElectronConsoleNoise } from './viewerConsole'
 import {
-  DEFAULT_VIEWER_SETTINGS, DEVICES, deviceViewport, fitScale,
-  type ConsoleEntry, type ViewerBounds, type ViewerSettings
+  DEFAULT_VIEWER_SETTINGS, DEVICES, deviceViewport, fitScale, sameViewerBounds, sameViewerSettings, sameDeviceEmulation,
+  type ConsoleEntry, type ViewerBounds, type ViewerSettings, type DeviceEmulationInput
 } from '../shared/viewer'
 
 interface ViewerSession {
@@ -14,6 +14,11 @@ interface ViewerSession {
   rendererReady: boolean
   loadGeneration: number
   entries: ConsoleEntry[]
+  appliedBounds?: ViewerBounds
+  appliedDevice?: DeviceEmulationInput
+  appliedUserAgent?: string
+  appliedTouch?: boolean
+  emulationGeneration: number
   touchUpdates: Promise<void>
 }
 
@@ -37,16 +42,25 @@ export class ViewerManager {
   ) {}
 
   show(id: string, bounds: ViewerBounds, settings: ViewerSettings, url: string | null): void {
-    this.hide()
-    this.requested = { id, bounds: { ...bounds }, settings: { ...settings } }
     const window = this.window()
-    if (!url || !isLocalUrl(url) || !window || window.isDestroyed()) return
+    if (!url || !isLocalUrl(url) || !window || window.isDestroyed()) {
+      this.hide()
+      this.requested = { id, bounds: { ...bounds }, settings: { ...settings } }
+      return
+    }
     const session = this.sessions.get(id) ?? this.create(id)
+    const attached = this.visible?.id === id && this.visible.window === window &&
+      window.contentView.children.includes(session.view)
+    const changed = !sameViewerBounds(session.bounds, bounds) || !sameViewerSettings(session.settings, settings)
+    if (!attached) {
+      this.hide()
+      window.contentView.addChildView(session.view)
+      this.visible = { id, window }
+    }
+    this.requested = { id, bounds: { ...bounds }, settings: { ...settings } }
     session.settings = { ...settings }
     session.bounds = { ...bounds }
-    window.contentView.addChildView(session.view)
-    this.visible = { id, window }
-    this.emulate(session)
+    if (!attached || changed) this.emulate(session)
     this.load(id, session, url)
   }
 
@@ -55,7 +69,9 @@ export class ViewerManager {
     if (!this.visible) return
     const { id, window } = this.visible
     const session = this.sessions.get(id)
-    if (session && !window.isDestroyed()) window.contentView.removeChildView(session.view)
+    if (session && !window.isDestroyed() && window.contentView.children.includes(session.view)) {
+      window.contentView.removeChildView(session.view)
+    }
     this.visible = null
   }
 
@@ -111,7 +127,7 @@ export class ViewerManager {
     } })
     const session: ViewerSession = {
       view, settings: { ...DEFAULT_VIEWER_SETTINGS }, url: null, loadGeneration: 0, rendererReady: false,
-      entries: [], touchUpdates: Promise.resolve()
+      entries: [], emulationGeneration: 0, touchUpdates: Promise.resolve()
     }
     this.sessions.set(id, session)
     const contents = view.webContents
@@ -134,11 +150,19 @@ export class ViewerManager {
         text, source, details.lineNumber ?? line)
     })
     contents.on('did-finish-load', () => {
+      if (session.rendererReady) return
+      session.appliedDevice = undefined
+      session.appliedTouch = undefined
+      ++session.emulationGeneration
       session.rendererReady = true
       this.emulate(session)
     })
     contents.on('did-start-navigation', (details, _url, isInPlace, isMainFrame) => {
-      if ((details.isMainFrame ?? isMainFrame) && !(details.isSameDocument ?? isInPlace)) this.clearConsole(id)
+      if ((details.isMainFrame ?? isMainFrame) && !(details.isSameDocument ?? isInPlace)) {
+        session.rendererReady = false
+        ++session.emulationGeneration
+        this.clearConsole(id)
+      }
     })
     contents.on('did-navigate', (_event, url) => {
       session.url = isLocalUrl(url) ? new URL(url).href : null
@@ -155,6 +179,7 @@ export class ViewerManager {
       this.record(id, session, 'error', `Renderer process gone: ${details.reason} (${details.exitCode})`)
       session.url = null
       session.rendererReady = false
+      ++session.emulationGeneration
     })
     return session
   }
@@ -171,6 +196,8 @@ export class ViewerManager {
     url = new URL(url).href
     if (session.url === url) return
     session.url = url
+    session.rendererReady = false
+    ++session.emulationGeneration
     const generation = ++session.loadGeneration
     void session.view.webContents.loadURL(url).catch((error: unknown) => {
       if (this.sessions.get(id) !== session || generation !== session.loadGeneration) return
@@ -192,23 +219,41 @@ export class ViewerManager {
     const scale = fitScale(viewport, bounds)
     const width = Math.round(viewport.width * scale)
     const height = Math.round(viewport.height * scale)
-    session.view.setBounds({
+    const viewBounds = {
       x: Math.round(bounds.x + (bounds.width - width) / 2),
       y: Math.round(bounds.y + (bounds.height - height) / 2), width, height
-    })
-    contents.setUserAgent(device.userAgent)
-    if (canEmulate(session.rendererReady, contents.isDestroyed())) contents.enableDeviceEmulation({
-      screenPosition: 'mobile', screenSize: viewport, viewPosition: { x: 0, y: 0 },
-      deviceScaleFactor: device.dpr, viewSize: viewport, scale
-    })
-    const enabled = session.settings.touch
-    // Serialize updates so rapid toggles cannot leave the older state applied last.
+    }
+    if (!sameViewerBounds(session.appliedBounds, viewBounds)) {
+      session.view.setBounds(viewBounds)
+      session.appliedBounds = { ...viewBounds }
+    }
+    if (session.appliedUserAgent !== device.userAgent) {
+      contents.setUserAgent(device.userAgent)
+      session.appliedUserAgent = device.userAgent
+    }
+    const deviceInput = { ...viewport, scale, dpr: device.dpr }
+    if (canEmulate(session.rendererReady, contents.isDestroyed()) &&
+      !sameDeviceEmulation(session.appliedDevice, deviceInput)) {
+      contents.enableDeviceEmulation({
+        screenPosition: 'mobile', screenSize: viewport, viewPosition: { x: 0, y: 0 },
+        deviceScaleFactor: device.dpr, viewSize: viewport, scale
+      })
+      session.appliedDevice = { ...deviceInput }
+    }
+    if (!session.rendererReady) return
+    const enabled = !!session.settings.touch
+    const generation = session.emulationGeneration
+    // Compare inside the queue so in-flight changes cannot reorder or duplicate CDP updates.
     session.touchUpdates = session.touchUpdates.then(async () => {
-      if (contents.isDestroyed()) return
+      if (contents.isDestroyed() || !session.rendererReady || generation !== session.emulationGeneration ||
+        session.appliedTouch === enabled) return
+      session.appliedTouch = undefined
       try {
         if (!contents.debugger.isAttached()) contents.debugger.attach('1.3')
         await contents.debugger.sendCommand('Emulation.setTouchEmulationEnabled', { enabled })
+        if (contents.isDestroyed() || generation !== session.emulationGeneration) return
         await contents.debugger.sendCommand('Emulation.setEmitTouchEventsForMouse', { enabled, configuration: 'mobile' })
+        if (generation === session.emulationGeneration) session.appliedTouch = enabled
       } catch { /* Debugger attachment may be owned by DevTools or the target may close. */ }
     })
   }

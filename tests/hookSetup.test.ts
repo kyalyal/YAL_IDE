@@ -32,6 +32,7 @@ describe('buildSettings', () => {
     const s = buildSettings('C:\\Users\\me\\data\\yal-hook.cjs') as {
       hooks: Record<string, { hooks: { type: string; command: string }[] }[]>
     }
+    expect(HOOK_EVENTS).toContain('PreToolUse')
     expect(Object.keys(s.hooks).sort()).toEqual([...HOOK_EVENTS].sort())
     for (const ev of HOOK_EVENTS) {
       const cmd = s.hooks[ev][0].hooks[0]

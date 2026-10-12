@@ -2,7 +2,7 @@ import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync,
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { seedMaster, syncMaster, syncPlanningLinks } from '../src/main/masterDoc'
+import { seedMaster, syncMaster, syncPlanningLinks, writeManagedFile, removeManagedFile } from '../src/main/masterDoc'
 
 let dir: string
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'yal-master-')) })
@@ -33,6 +33,9 @@ describe('master documents', () => {
     expect(text).toContain('프로젝트 밖 파일 삭제, force push, 원격 변경, 비밀정보 외부 전송')
     expect(text).toContain('실행 전에 사용자에게 확인한다')
     expect(text).toContain('--approved')
+    expect(text).toContain('.claude/yal-planning-changes.md')
+    expect(text).toContain('Claude/GPT')
+    expect(text).toContain('[\uBC18\uC601 \uC644\uB8CC]')
     expect(text).toContain('## 스킬 갱신 정책')
     writeFileSync(file, 'user master')
     expect(seedMaster(dir)).toBe(file)
@@ -131,4 +134,28 @@ it.each(['yal-master.md', 'yal-planning-link.md'])('preserves an unowned sidecar
   } else syncPlanningLinks([dev, planning])
   expect(readFileSync(sidecar, 'utf8')).toBe('user sidecar')
   expect(existsSync(file)).toBe(false)
+})
+
+it('public wrappers create read-only managed files, update and remove owned files', () => {
+  const dev = project('dev'), name = 'yal-planning-changes.md', file = join(dev.path, '.claude', name)
+  writeManagedFile(dev.path, name, 'first')
+  expect(readFileSync(file, 'utf8')).toBe('first')
+  expect(lstatSync(file).mode & 0o222).toBe(0)
+  writeManagedFile(dev.path, name, 'second')
+  expect(readFileSync(file, 'utf8')).toBe('second')
+  removeManagedFile(dev.path, name)
+  expect(existsSync(file)).toBe(false)
+  expect(existsSync(file + '.yal-managed')).toBe(false)
+})
+it('public wrappers preserve unmanaged collisions and reject unsafe destinations', () => {
+  const dev = project('dev'), name = 'yal-planning-changes.md', file = join(dev.path, '.claude', name)
+  mkdirSync(join(dev.path, '.claude')); writeFileSync(file, 'USER')
+  expect(() => writeManagedFile(dev.path, name, 'replacement')).toThrow(/Unmanaged/)
+  removeManagedFile(dev.path, name)
+  expect(readFileSync(file, 'utf8')).toBe('USER')
+  const other = project('dev2')
+  symlinkSync(join(dev.path, '.claude'), join(other.path, '.claude'), 'junction')
+  expect(() => writeManagedFile(other.path, name, 'unsafe')).toThrow(/symbolic/i)
+  expect(() => removeManagedFile(other.path, name)).toThrow(/symbolic/i)
+  expect(readFileSync(file, 'utf8')).toBe('USER')
 })

@@ -1,14 +1,22 @@
-import { Fragment, useEffect, useRef, useState } from 'react'
-import type { AddProjectResult, ProjectKind, ProjectStatus, ProjectView } from '../../../shared/types'
+import { Fragment, useEffect, useRef, useState, type CSSProperties } from 'react'
+import type { AddProjectResult, ProjectKind, ProjectActivity, ProjectStatus, ProjectView } from '../../../shared/types'
 import { validateProjectName } from '../../../shared/projectNames'
 import { splitByKind, pinnedSplitIndex, pinLabel, projectTargetPath } from '../projectListState'
+import { deriveActivity, activityLabel } from '../activityState'
+import { clampSpaceRatio, parseSpaceRatio } from '../sidebarState'
 import { useI18n } from '../i18n/I18nProvider'
 
 interface Props {
+  style?: CSSProperties
+  onSpaceDraggingChange?(dragging: boolean): void
   projects: ProjectView[]
   selectedId: string | null
   runningIds: string[]
   statuses: Record<string, ProjectStatus>
+  activities?: Record<string, ProjectActivity>
+  now?: number
+  pendingIds?: string[]
+  planningChanges?: Record<string, number>
   onSelect(id: string): void
   onAdd(kind: ProjectKind): void
   onCreate(name: string, kind: ProjectKind): Promise<AddProjectResult>
@@ -20,10 +28,16 @@ interface Props {
 }
 
 export function ProjectList({
+  style,
+  onSpaceDraggingChange,
   projects,
   selectedId,
   runningIds,
   statuses,
+  activities = {},
+  now = Date.now(),
+  pendingIds = [],
+  planningChanges = {},
   onSelect,
   onAdd,
   onCreate,
@@ -34,6 +48,66 @@ export function ProjectList({
   onOpenSkills
 }: Props) {
   const { t } = useI18n()
+  const [spaceRatio, setSpaceRatio] = useState(() => {
+    try { return parseSpaceRatio(localStorage.getItem('yal.sidebar.spaceRatio')) }
+    catch { return .4 }
+  })
+  const [spaceDragging, setSpaceDragging] = useState(false)
+  const spaces = useRef<HTMLDivElement>(null)
+  const spaceDrag = useRef<{ id: number; target: HTMLDivElement; offset: number } | null>(null)
+  const dragCallback = useRef(onSpaceDraggingChange)
+  dragCallback.current = onSpaceDraggingChange
+  function finishSpaceDrag(pointerId: number) {
+    const drag = spaceDrag.current
+    if (!drag || drag.id !== pointerId) return
+    spaceDrag.current = null
+    if (drag.target.hasPointerCapture(drag.id)) drag.target.releasePointerCapture(drag.id)
+    setSpaceDragging(false)
+    dragCallback.current?.(false)
+  }
+  useEffect(() => () => {
+    const drag = spaceDrag.current
+    spaceDrag.current = null
+    if (drag?.target.hasPointerCapture(drag.id)) drag.target.releasePointerCapture(drag.id)
+    if (drag) dragCallback.current?.(false)
+  }, [])
+  useEffect(() => {
+    try { localStorage.setItem('yal.sidebar.spaceRatio', String(spaceRatio)) } catch { /* Keep in-memory ratio. */ }
+  }, [spaceRatio])
+  const spaceSplitter = <div className={'space-splitter' + (spaceDragging ? ' dragging' : '')}
+    role="separator" aria-label={t('spaceRatio')} aria-orientation="horizontal" tabIndex={0}
+    aria-valuemin={15} aria-valuemax={85} aria-valuenow={Math.round(spaceRatio * 100)}
+    onPointerDown={event => {
+      if (event.button !== 0 || spaceDrag.current) return
+      event.preventDefault()
+      event.currentTarget.setPointerCapture(event.pointerId)
+      spaceDrag.current = { id: event.pointerId, target: event.currentTarget,
+        offset: event.clientY - event.currentTarget.getBoundingClientRect().top }
+      setSpaceDragging(true)
+      dragCallback.current?.(true)
+    }}
+    onPointerMove={event => {
+      const drag = spaceDrag.current
+      if (!drag || drag.id !== event.pointerId || !event.currentTarget.hasPointerCapture(event.pointerId)) return
+      const bounds = spaces.current?.getBoundingClientRect()
+      if (!bounds) return
+      const height = bounds.height - 5
+      // Both tracks have a 64px minimum; a shorter grid has no movable boundary.
+      if (height <= 128) return
+      const planningHeight = Math.max(64, Math.min(event.clientY - bounds.top - drag.offset, height - 64))
+      setSpaceRatio(clampSpaceRatio(planningHeight / height))
+    }}
+    onPointerUp={event => finishSpaceDrag(event.pointerId)}
+    onPointerCancel={event => finishSpaceDrag(event.pointerId)}
+    onLostPointerCapture={event => finishSpaceDrag(event.pointerId)}
+    onKeyDown={event => {
+      if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return
+      event.preventDefault()
+      const delta = (event.key === 'ArrowDown' ? 1 : -1) * (event.shiftKey ? .1 : .02)
+      setSpaceRatio(ratio => clampSpaceRatio(ratio + delta))
+    }}
+    onDoubleClick={() => setSpaceRatio(.4)}
+  />
   const [menuOpen, setMenuOpen] = useState<ProjectKind | null>(null)
   const [formOpen, setFormOpen] = useState<ProjectKind | null>(null)
   const [name, setName] = useState('')
@@ -92,7 +166,6 @@ export function ProjectList({
     } catch { setError(t('projectActionError')) }
     finally { creating.current = false; setBusy(false) }
   }
-  const statusLabel = (status: ProjectStatus) => status === 'idle' ? '' : t(status)
   async function togglePin(project: ProjectView) {
     if (pendingPins.current.has(project.id)) return
     pendingPins.current.add(project.id)
@@ -105,12 +178,15 @@ export function ProjectList({
     }
   }
   return (
-    <aside className="sidebar">
-      <div className="project-spaces">
+    <aside className="sidebar" style={style}>
+      <div className="project-spaces" ref={spaces}
+        style={{ gridTemplateRows: `minmax(64px, ${spaceRatio}fr) 5px minmax(64px, ${1 - spaceRatio}fr)` }}>
       {(['planning', 'dev'] as const).map(kind => {
         const orderedProjects = groups[kind]
         const splitIndex = pinnedSplitIndex(orderedProjects)
-        return <section key={kind} className={`project-space ${kind}`} aria-label={t(kind)}>
+        return <Fragment key={kind}>
+      {kind === 'dev' && spaceSplitter}
+      <section className={`project-space ${kind}`} aria-label={t(kind)}>
       <div className="sidebar-header">
         <span>{t(kind)}</span>
         <button ref={node => { addButtons.current[kind] = node }} className="icon-btn"
@@ -148,7 +224,9 @@ export function ProjectList({
       )}
       <ul className="project-list">
         {orderedProjects.map((p, index) => {
-          const status = statuses[p.id] ?? 'idle'
+          const derived = deriveActivity(activities[p.id] ?? { status: statuses[p.id] ?? 'idle', lastActivityAt: 0, gptRunning: false, gptSince: null }, now)
+          const status = derived.state
+          const label = status === 'idle' ? '' : activityLabel(derived, t)
           return (
           <Fragment key={p.id}>
           {index === splitIndex && <li className="project-group-divider" role="separator" />}
@@ -160,7 +238,7 @@ export function ProjectList({
           >
             <span
               className={'dot ' + status + (runningIds.includes(p.id) ? ' live' : '')}
-              title={statusLabel(status) || t(runningIds.includes(p.id) ? 'idle' : 'noSession')}
+              title={label || t(runningIds.includes(p.id) ? 'idle' : 'noSession')}
             />
             <div className="project-identity">
               <span className="project-name">{p.name}</span>
@@ -172,7 +250,9 @@ export function ProjectList({
               </select> : kind === 'dev' && p.linkedPlanningId && groups.planning.some(plan => plan.id === p.linkedPlanningId) &&
                 <small className="planning-link-name">🔗 {groups.planning.find(plan => plan.id === p.linkedPlanningId)?.name}</small>}
             </div>
-            {statusLabel(status) && <span className={'status-label ' + status}>{statusLabel(status)}</span>}
+            {kind === 'dev' && p.linkedPlanningId && planningChanges[p.id] > 0 && <span className="planning-change-label">{t('planningListChanged', { count: planningChanges[p.id] })}</span>}
+            {label && <span className={'status-label ' + status}>{label}</span>}
+            {pendingIds.includes(p.id) && <span className="activity-deferred">{t('activityDeferred')}</span>}
             {!p.exists && <span className="badge-missing">{t('missingPath')}</span>}
             <button className={'icon-btn pin' + (p.pinned ? ' pinned' : '')}
               title={t(pinLabel(p.pinned))} aria-label={t(pinLabel(p.pinned))} aria-pressed={p.pinned === true}
@@ -198,6 +278,7 @@ export function ProjectList({
       </ul>
       </div>
       </section>
+      </Fragment>
       })}
       </div>
       {!formOpen && error && <p className="project-create-error" role="alert">{error}</p>}

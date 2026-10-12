@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { DEVICES } from '../../../shared/viewer'
+import { DEVICES, roundedViewerBounds, sameViewerBounds, type ViewerBounds } from '../../../shared/viewer'
 import { ExportPanel } from './ExportPanel'
 import { useViewer } from './useViewer'
 import { useI18n } from '../i18n/I18nProvider'
@@ -21,6 +21,7 @@ function ProjectViewer({ projectId }: { projectId: string }) {
   const [boundsError, setBoundsError] = useState('')
   const stage = useRef<HTMLDivElement>(null)
   const consoleBody = useRef<HTMLDivElement>(null)
+  const sentBounds = useRef<{ projectId: string; bounds: ViewerBounds } | null>(null)
   const reportBounds = useRef<() => void>(() => {})
   const showCommand = viewer.ready && !status.command
   const active = status.state === 'running' || status.state === 'starting'
@@ -30,6 +31,7 @@ function ProjectViewer({ projectId }: { projectId: string }) {
   useEffect(() => setCommand(status.command ?? ''), [status.command])
 
   useLayoutEffect(() => {
+    sentBounds.current = null
     let frame: number | null = null
     let disposed = false
     const schedule = () => {
@@ -38,9 +40,17 @@ function ProjectViewer({ projectId }: { projectId: string }) {
         frame = null
         const el = stage.current
         if (!el || disposed) return
-        const { x, y, width, height } = el.getBoundingClientRect()
-        void window.yalViewer.showViewer(projectId, { x, y, width, height }).catch((reason: unknown) => {
-          if (!disposed) setBoundsError(String(reason))
+        const bounds = roundedViewerBounds(el.getBoundingClientRect())
+        if (!bounds || (sentBounds.current?.projectId === projectId &&
+          sameViewerBounds(sentBounds.current.bounds, bounds))) return
+        const sent = { projectId, bounds: { ...bounds } }
+        const request = window.yalViewer.showViewer(projectId, bounds)
+        sentBounds.current = sent
+        void request.catch((reason: unknown) => {
+          if (!disposed) {
+            if (sentBounds.current === sent) sentBounds.current = null
+            setBoundsError(String(reason))
+          }
         })
       })
     }
@@ -53,6 +63,7 @@ function ProjectViewer({ projectId }: { projectId: string }) {
     schedule()
     return () => {
       disposed = true
+      sentBounds.current = null
       reportBounds.current = () => {}
       if (frame !== null) cancelAnimationFrame(frame)
       observer.disconnect()

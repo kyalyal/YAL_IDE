@@ -1,5 +1,5 @@
 import { afterAll, expect, it, vi } from 'vitest'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, utimesSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { GPT_LOG_IPC } from '../src/shared/gptLog'
@@ -57,7 +57,23 @@ it('upgrades startup/add projects, passes pty log paths, streams, clears, valida
   expect(state.send).toHaveBeenCalledWith(GPT_LOG_IPC.append, expect.objectContaining({ projectId: 'p', chunk: 'line\n' }))
   expect(() => call(GPT_LOG_IPC.readTail, '../evil')).toThrow(/registered/)
   expect(() => call(GPT_LOG_IPC.clear, 'unknown')).toThrow(/registered/)
-  call(GPT_LOG_IPC.clear, 'p'); expect(readFileSync(log, 'utf8')).toBe('')
+  const since = Date.parse('2026-10-12T01:00:00Z')
+  writeFileSync(log, 'line\n=== [YAL-GPT] start 2026-10-12T01:00:00Z model=gpt-6.1-sol ===\n')
+  writeFileSync(join(state.userData, 'status/p.json'), JSON.stringify({ state: 'done', ts: 123 }))
+  const now = Date.now()
+  const clock = vi.spyOn(Date, 'now').mockReturnValue(now)
+  const activity = call(IPC.projectActivity)
+  expect(clock).toHaveBeenCalledTimes(1)
+  clock.mockRestore()
+  expect(activity).toEqual({ p: { status: 'done', lastActivityAt: 123, gptRunning: true, gptSince: since } })
+  expect(call(IPC.projectStatuses)).toEqual({ p: 'done' })
+  utimesSync(log, new Date(now - 30 * 60_000 - 10), new Date(now - 30 * 60_000 - 10))
+  expect(call(IPC.projectActivity).p.gptRunning).toBe(false)
+  call(GPT_LOG_IPC.clear, 'p');
+  expect(call(IPC.projectActivity).p).toEqual({ status: 'done', lastActivityAt: 123, gptRunning: false, gptSince: null })
+  rmSync(join(state.userData, 'status/p.json'))
+  expect(call(IPC.projectActivity).p).toEqual({ status: 'idle', lastActivityAt: 0, gptRunning: false, gptSince: null })
+  expect(readFileSync(log, 'utf8')).toBe('')
   expect(state.send).toHaveBeenCalledWith(GPT_LOG_IPC.append, expect.objectContaining({ reset: true, chunk: '' }))
   const addedPath = join(root, 'added'); mkdirSync(join(addedPath, 'scripts'), { recursive: true })
   writeFileSync(join(addedPath, 'scripts/gpt.sh'), PREVIOUS_GPT_SH[1])

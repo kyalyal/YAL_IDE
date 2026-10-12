@@ -1,4 +1,4 @@
-import { expect, it, vi } from 'vitest'
+import { beforeEach, expect, it, vi } from 'vitest'
 import { DEFAULT_VIEWER_SETTINGS } from '../src/shared/viewer'
 const fake = vi.hoisted(() => {
  const handlers: Record<string, (...args: any[]) => void> = {}
@@ -7,8 +7,17 @@ const fake = vi.hoisted(() => {
 })
 vi.mock('electron', () => ({ WebContentsView: class { webContents = fake.contents; setBounds(bounds: unknown) { fake.bounds(bounds) } } }))
 import { ViewerManager } from '../src/main/viewerManager'
+beforeEach(() => vi.clearAllMocks())
+function fakeWindow() {
+ const children: unknown[] = []
+ return { isDestroyed: () => false, contentView: {
+  children,
+  addChildView(view: unknown) { children.push(view) },
+  removeChildView(view: unknown) { const index = children.indexOf(view); if (index >= 0) children.splice(index, 1) }
+ } }
+}
 it('never calls native emulation on a newly created or crashed renderer', () => {
- const window = { isDestroyed: () => false, contentView: { addChildView() {}, removeChildView() {} } }
+ const window = fakeWindow()
  const manager = new ViewerManager(() => window as any, {onConsole() {}})
  manager.show('game', {x: 0, y: 0, width: 500, height: 500}, DEFAULT_VIEWER_SETTINGS, 'http://localhost:5199')
  expect(fake.contents.enableDeviceEmulation).not.toHaveBeenCalled()
@@ -20,7 +29,7 @@ it('never calls native emulation on a newly created or crashed renderer', () => 
 })
 
 it('centers the fitted game in the new stage rectangle after a splitter move', () => {
- const window = { isDestroyed: () => false, contentView: { addChildView() {}, removeChildView() {} } }
+ const window = fakeWindow()
  const manager = new ViewerManager(() => window as any, {onConsole() {}})
  const settings = {...DEFAULT_VIEWER_SETTINGS, deviceId: 'ipad', orientation: 'landscape' as const}
  manager.show('game', {x: 733, y: 105, width: 531, height: 449}, settings, 'http://localhost:5199')

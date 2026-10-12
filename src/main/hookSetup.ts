@@ -6,6 +6,7 @@ export const HOOK_EVENTS = [
   'UserPromptSubmit',
   'Stop',
   'Notification',
+  'PreToolUse',
   'PostToolUse',
   'SessionEnd'
 ] as const

@@ -88,7 +88,7 @@ it('App persists a planning link through YalApi and refreshes the rendered list'
   const projects = [project('plan', 'planning', { exists: false }), project('game', 'dev', { exists: false })]
   Object.assign(window.yal, {
     listProjects: vi.fn().mockResolvedValue(projects), checkEnv: vi.fn().mockResolvedValue([]),
-    runningTerminals: vi.fn().mockResolvedValue([]), projectStatuses: vi.fn().mockResolvedValue({}),
+    runningTerminals: vi.fn().mockResolvedValue([]), projectActivity: vi.fn().mockResolvedValue({}),
     setLinkedPlanning: vi.fn().mockResolvedValue([projects[0], { ...projects[1], linkedPlanningId: 'plan' }])
   })
   window.yalViewer = { hideViewer: vi.fn().mockResolvedValue(undefined) } as unknown as typeof window.yalViewer

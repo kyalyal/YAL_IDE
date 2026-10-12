@@ -16,9 +16,10 @@ interface Cursor {
   markers: { start?: string; order?: string; end?: string }
   markerPending: string
   markerDropping: boolean
+  outstanding: (number | null)[]
 }
 const emptyCursor = (): Cursor => ({ offset: 0, mtime: 0, ino: null, revision: 0, decoder: new StringDecoder('utf8'),
-  markers: {}, markerPending: '', markerDropping: false })
+  markers: {}, markerPending: '', markerDropping: false, outstanding: [] })
 
 export class GptLogWatcher {
   private readonly cursors = new Map<string, Cursor>()
@@ -51,8 +52,19 @@ export class GptLogWatcher {
     this.cursors.set(id, cursor)
     if (!this.timer) this.timer = setInterval(() => this.poll(), this.options.intervalMs ?? 500)
   }
+  isGptRunning(id: string, now = Date.now()): boolean {
+    const cursor = this.cursors.get(id)
+    if (!cursor?.outstanding.length) return false
+    // Empty replacement files created by rotation are not task activity.
+    const mtime = Math.max(cursor.offset > 0 ? cursor.mtime : 0,
+      cursor.rotated && cursor.rotated.offset > 0 ? cursor.rotated.mtime : 0)
+    return Number.isFinite(now) && Number.isFinite(mtime) && now - mtime <= 30 * 60_000
+  }
+  gptRunningSince(id: string): number | null {
+    return this.cursors.get(id)?.outstanding[0] ?? null
+  }
   private publish(id: string, cursor: Cursor, chunk: string, reset = false, updatedAt = cursor.mtime): void {
-    if (reset) { cursor.markers = {}; cursor.markerPending = ''; cursor.markerDropping = false }
+    if (reset) { cursor.markers = {}; cursor.markerPending = ''; cursor.markerDropping = false; cursor.outstanding = [] }
     this.rememberMarkers(cursor, chunk)
     this.emit({ projectId: id, chunk, reset, revision: ++cursor.revision, updatedAt })
   }
@@ -63,6 +75,14 @@ export class GptLogWatcher {
     for (const raw of lines) {
       if (dropping) { dropping = false; continue }
       const line = raw.replace(/\r$/, '')
+      const start = /^=== \[YAL-GPT\] start (\S+) model=\S+ ===$/.exec(line)
+      const end = /^=== \[YAL-GPT\] end (\S+) exit=-?\d+ ===$/.exec(line)
+      if (start) {
+        const since = Date.parse(start[1])
+        cursor.outstanding.push(Number.isFinite(since) ? since : null)
+      }
+      // End markers have no task identity, so consume starts in observed order.
+      else if (end) cursor.outstanding.shift()
       if (/^=== \[YAL-GPT\] start \S+ model=\S+ ===$/.test(line)) cursor.markers = { start: line }
       else if (cursor.markers.start && /^=== \[YAL-GPT\] order .* ===$/.test(line)) cursor.markers.order = line.slice(0, 512)
       else if (cursor.markers.start && /^=== \[YAL-GPT\] end \S+ exit=-?\d+ ===$/.test(line)) cursor.markers.end = line
@@ -80,6 +100,7 @@ export class GptLogWatcher {
       try {
         const stat = this.fs.stat(path + '.1')
         const backup = cursor.rotated
+        backup.mtime = stat.mtimeMs
         const grew = backup.offset < stat.size
         while (backup.offset < stat.size) {
           const bytes = this.fs.read(path + '.1', backup.offset, Math.min(64 * 1024, stat.size - backup.offset))

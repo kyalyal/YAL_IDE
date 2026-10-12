@@ -76,6 +76,14 @@ function removeManaged(file: string, name: string): void {
   unlinkSync(sidecar)
 }
 
+export function writeManagedFile(projectPath: string, name: string, content: string): void {
+  writeManaged(destination(projectPath, name), name, content)
+}
+
+export function removeManagedFile(projectPath: string, name: string): void {
+  removeManaged(destination(projectPath, name), name)
+}
+
 export function seedMaster(userData: string): string {
   const folder = join(userData, 'master'), file = join(folder, 'MASTER.md')
   rejectSymbolic(userData)
