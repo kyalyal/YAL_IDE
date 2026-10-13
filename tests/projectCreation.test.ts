@@ -26,10 +26,10 @@ function fixture(existing = false) {
 describe('createProject', () => {
   it('passes planning kind to registration and provisioning and fills the returned view', () => {
     const { root, deps } = fixture()
-    const result = createProject(deps, root, 'planning', 'planning')
-    expect(deps.registry.add).toHaveBeenCalledWith(join(root, 'planning'), 'planning')
-    expect(deps.provision).toHaveBeenCalledWith(join(root, 'planning'), 'planning', 'planning')
-    expect(result).toMatchObject({ ok: true, project: { kind: 'planning' } })
+    const result = createProject(deps, root, 'assets', 'assets')
+    expect(deps.registry.add).toHaveBeenCalledWith(join(root, 'assets'), 'assets')
+    expect(deps.provision).toHaveBeenCalledWith(join(root, 'assets'), 'assets', 'assets')
+    expect(result).toMatchObject({ ok: true, project: { kind: 'assets' } })
   })
   it('rejects a relative root before filesystem changes', () => {
     const { deps } = fixture()

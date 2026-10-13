@@ -91,7 +91,7 @@ export class SkillSync {
             const managedFile = join(folder, 'SKILL.md')
             if (this.deps.preserveModified && marker && this.fs.existsSync(managedFile)
               && (this.fs.lstatSync(managedFile).isSymbolicLink() || hash(this.fs.readFileSync(managedFile, 'utf8')) !== marker.sha256)) {
-              conflict(name, skill?.version ?? marker.version, `Modified planning skill preserved: ${folder}`); continue
+              conflict(name, skill?.version ?? marker.version, `Modified assets skill preserved: ${folder}`); continue
             }
             if (!skill) {
               if (this.fs.existsSync(join(this.store.rootDir, name))) throw new Error('Invalid canonical skill preserved; managed copy was not removed')

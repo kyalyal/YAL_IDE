@@ -1,3 +1,5 @@
+import { ensureAssetsUsedNote } from './assetsUsageNote'
+import { scaffoldAssetsProject } from './assetsScaffold'
 import { createHash } from 'node:crypto'
 import { existsSync, lstatSync, appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -46,6 +48,19 @@ export function provision(projectPath: string, projectName: string, kind: Projec
     { rel: 'AGENTS.md', content: agentsMd(projectName, kind), mode: 0o644 },
     { rel: 'scripts/gpt.sh', content: GPT_SH, mode: 0o755 }
   ]
+
+  // Creation, folder addition and reopening/migrated projects share this flow.
+  if (kind === 'dev' && ensureAssetsUsedNote(projectPath)) result.created.push('assets/ASSETS-USED.md')
+  if (kind === 'assets') {
+    try {
+      const scaffold = scaffoldAssetsProject(projectPath)
+      result.created.push(...scaffold.created)
+      result.skipped.push(...scaffold.skipped)
+    } catch (error) {
+      // Optional scaffold failure must not abort creation or app startup.
+      console.error('Assets scaffold failed:', error)
+    }
+  }
 
   for (const t of targets) {
     const abs = join(projectPath, ...t.rel.split('/'))

@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs'
 import { basename, dirname, resolve } from 'node:path'
 import type { ProjectKind, ProjectRecord, ProjectView } from '../shared/types'
+import { normalizeLegacyProject } from './assetsMigration'
 
 export class DuplicateProjectError extends Error {
   constructor(path: string) {
@@ -57,7 +58,7 @@ export class ProjectRegistry {
 
   list(): ProjectView[] {
     return [...this.projects.filter((p) => p.pinned === true), ...this.projects.filter((p) => p.pinned !== true)]
-      .map((p) => ({ ...p, kind: p.kind === 'planning' ? 'planning' : 'dev', exists: isDirectory(p.path) }))
+      .map((p) => ({ ...p, kind: p.kind === 'assets' ? 'assets' : 'dev', exists: isDirectory(p.path) }))
   }
 
   get(id: string): ProjectRecord | undefined {
@@ -86,9 +87,9 @@ export class ProjectRegistry {
     if (idx < 0) throw new ProjectNotFoundError(id)
     const removed = this.projects[idx]
     this.save(this.projects.filter((p) => p.id !== id).map((p) => {
-      if (p.linkedPlanningId !== id) return p
+      if (p.linkedAssetsId !== id) return p
       const updated = { ...p }
-      delete updated.linkedPlanningId
+      delete updated.linkedAssetsId
       return updated
     }))
     return removed
@@ -99,7 +100,7 @@ export class ProjectRegistry {
     try {
       const data: unknown = JSON.parse(readFileSync(this.file, 'utf8'))
       if (!Array.isArray(data)) throw new Error('projects.json is not an array')
-      this.projects = data.filter(isRecord).map((p) => ({ ...p, kind: p.kind === 'planning' ? 'planning' : 'dev' }))
+      this.projects = data.filter(isRecord).map(normalizeLegacyProject)
     } catch {
       try {
         renameSync(this.file, `${this.file}.corrupt-${Date.now()}`)
@@ -110,20 +111,20 @@ export class ProjectRegistry {
     }
   }
 
-  setLinkedPlanning(devId: string, planningId: string | null): void {
+  setLinkedAssets(devId: string, assetsId: string | null): void {
     const dev = this.get(devId)
     if (!dev) throw new ProjectNotFoundError(devId)
     if (dev.kind !== 'dev') throw new Error('Invalid link')
-    if (planningId !== null) {
-      const planning = this.get(planningId)
-      if (!planning) throw new ProjectNotFoundError(planningId)
-      if (planning.kind !== 'planning') throw new Error('Invalid link')
+    if (assetsId !== null) {
+      const planning = this.get(assetsId)
+      if (!planning) throw new ProjectNotFoundError(assetsId)
+      if (planning.kind !== 'assets') throw new Error('Invalid link')
     }
     this.save(this.projects.map((p) => {
       if (p.id !== devId) return p
       const updated = { ...p }
-      if (planningId === null) delete updated.linkedPlanningId
-      else updated.linkedPlanningId = planningId
+      if (assetsId === null) delete updated.linkedAssetsId
+      else updated.linkedAssetsId = assetsId
       return updated
     }))
   }

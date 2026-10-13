@@ -4,6 +4,17 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { ManageSpace, validateManageStorage } from '../src/main/manageSpace'
 
+it('protects assets and all preserved planning migration folders from management edits', () => {
+  const root = mkdtempSync(join(tmpdir(), 'yal-protection-'))
+  try {
+    for (const space of ['assets', 'planning-migrated', 'planning-migrated-123']) {
+      mkdirSync(join(root, 'spaces', space, 'skills'), { recursive: true })
+      expect(() => validateManageStorage(root, join(root, 'spaces', space))).toThrow()
+      expect(() => validateManageStorage(root, join(root, 'spaces', space, 'skills'))).toThrow()
+    }
+  } finally { rmSync(root, { recursive: true, force: true }) }
+})
+
 it('keeps editable management skills and master outside planning and dev', () => {
   const root = mkdtempSync(join(tmpdir(), 'yal-manage-'))
   try {

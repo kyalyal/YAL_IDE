@@ -30,6 +30,7 @@ export function createProject(deps: CreationDeps, root: string, name: string, ki
     deps.fs.mkdirSync(target)
     created = true
     record = deps.registry.add(target, kind)
+    // provision also creates the non-overwriting assets scaffold for kind assets.
     const provision = deps.provision(target, checked.name, kind)
     if (provision.errors.length) throw new Error(provision.errors.map(e => `${e.file}: ${e.message}`).join('; '))
     return { ok: true, project: { ...record, kind, exists: true }, provision }

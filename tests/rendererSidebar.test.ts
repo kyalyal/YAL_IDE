@@ -109,7 +109,7 @@ it('releases both active captures on unmount', async () => {
   await pointer(side, 'pointerdown'); await pointer(space, 'pointerdown')
   await ui.close(); expect(a.size).toBe(0); expect(b.size).toBe(0)
 })
-it.each([['ko', '사이드바 너비', '기획 공간 비율'], ['en', 'Sidebar width', 'Planning space ratio']] as const)('provides translated %s separator labels and orientations', async (language, width, ratio) => {
+it.each([['ko', '사이드바 너비', '에셋 공간 비율'], ['en', 'Sidebar width', 'Assets space ratio']] as const)('provides translated %s separator labels and orientations', async (language, width, ratio) => {
   window.yalSettings.get = async () => ({ ...DEFAULT_APP_SETTINGS, language })
   await start()
   expect(splitter('sidebar').getAttribute('aria-label')).toBe(width)

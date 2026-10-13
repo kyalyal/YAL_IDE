@@ -1,6 +1,7 @@
 import { join } from 'node:path'
 import { StringDecoder } from 'node:string_decoder'
 import type { GptLogAppend, GptLogSnapshot } from '../shared/gptLog'
+import { DEFAULT_LEGACY_IDLE_MS, gptStartMarker, gptEndMarker } from '../shared/gptLogParser'
 
 export interface GptLogFs {
   stat(path: string): { size: number; mtimeMs: number; ino: number }
@@ -18,17 +19,21 @@ interface Cursor {
   markers: { start?: string; order?: string; end?: string }
   markerPending: string
   markerDropping: boolean
-  outstanding: (number | null)[]
+  legacyOutstanding: (number | null)[]
+  outstanding: Map<string, number | null>
+  ended: Set<string>
+  hasRunIds: boolean
 }
 const emptyCursor = (): Cursor => ({ offset: 0, mtime: 0, ino: null, revision: 0, decoder: new StringDecoder('utf8'),
-  lastOutputAt: 0, markers: {}, markerPending: '', markerDropping: false, outstanding: [] })
+  lastOutputAt: 0, markers: {}, markerPending: '', markerDropping: false,
+  legacyOutstanding: [], outstanding: new Map(), ended: new Set(), hasRunIds: false })
 
 export class GptLogWatcher {
   private readonly cursors = new Map<string, Cursor>()
   private timer: ReturnType<typeof setInterval> | undefined
   private readonly cap: number
   constructor(private readonly root: string, private readonly fs: GptLogFs,
-    private readonly emit: (event: GptLogAppend) => void, private readonly options: { maxBytes?: number; intervalMs?: number } = {}) {
+    private readonly emit: (event: GptLogAppend) => void, private readonly options: { maxBytes?: number; intervalMs?: number; legacyIdleMs?: number } = {}) {
     this.cap = options.maxBytes ?? 5 * 1024 * 1024
   }
   path(id: string): string {
@@ -57,24 +62,30 @@ export class GptLogWatcher {
   }
   isGptRunning(id: string, now = Date.now()): boolean {
     const cursor = this.cursors.get(id)
-    if (!cursor?.outstanding.length) return false
-    // Empty replacement files created by rotation are not task activity.
-    const mtime = Math.max(cursor.offset > 0 ? cursor.mtime : 0,
-      cursor.rotated && cursor.rotated.offset > 0 ? cursor.rotated.mtime : 0)
-    return Number.isFinite(now) && Number.isFinite(mtime) && now - mtime <= 30 * 60_000
+    if (!cursor || !Number.isFinite(now)) return false
+    if (cursor.hasRunIds) return cursor.outstanding.size > 0
+    return cursor.legacyOutstanding.length > 0 && Number.isFinite(cursor.lastOutputAt) && now - cursor.lastOutputAt <= this.legacyIdleMs
   }
-  activity(id: string): { active: boolean; since: number | null; lastOutputAt: number; sessionId?: string } {
+  private get legacyIdleMs(): number {
+    const timeout = this.options.legacyIdleMs
+    return timeout !== undefined && Number.isFinite(timeout) && timeout >= 0 ? timeout : DEFAULT_LEGACY_IDLE_MS
+  }
+  activity(id: string, now = Date.now()): { active: boolean; since: number | null; lastOutputAt: number; sessionId?: string } {
     const cursor = this.cursors.get(id)
-    return { active: Boolean(cursor?.outstanding.length), since: cursor?.outstanding[0] ?? null, lastOutputAt: cursor?.lastOutputAt ?? 0, sessionId: cursor?.sessionId }
+    const active = this.isGptRunning(id, now)
+    return { active, since: this.gptRunningSince(id, now), lastOutputAt: cursor?.lastOutputAt ?? 0, sessionId: active ? cursor?.sessionId : undefined }
   }
-  gptRunningSince(id: string): number | null {
-    return this.cursors.get(id)?.outstanding[0] ?? null
+  gptRunningSince(id: string, now = Date.now()): number | null {
+    if (!this.isGptRunning(id, now)) return null
+    const cursor = this.cursors.get(id)!
+    return cursor.hasRunIds ? cursor.outstanding.values().next().value ?? null : cursor.legacyOutstanding[0] ?? null
   }
   private publish(id: string, cursor: Cursor, chunk: string, reset = false, updatedAt = cursor.mtime): void {
-    if (reset) { cursor.lastOutputAt = 0; cursor.sessionId = undefined; cursor.markers = {}; cursor.markerPending = ''; cursor.markerDropping = false; cursor.outstanding = [] }
+    if (reset) { cursor.lastOutputAt = 0; cursor.sessionId = undefined; cursor.markers = {}; cursor.markerPending = ''; cursor.markerDropping = false;
+      cursor.legacyOutstanding = []; cursor.outstanding.clear(); cursor.ended.clear(); cursor.hasRunIds = false }
     if (chunk.split('\n').some(line => line.trim() && !/^=== \[YAL-GPT\] (stall|resumed) /.test(line))) cursor.lastOutputAt = updatedAt
     this.rememberMarkers(cursor, chunk)
-    this.emit({ projectId: id, chunk, reset, revision: ++cursor.revision, updatedAt })
+    this.emit({ projectId: id, chunk, reset, revision: ++cursor.revision, updatedAt, hasRunIds: cursor.hasRunIds, lastOutputAt: cursor.lastOutputAt })
   }
   private rememberMarkers(cursor: Cursor, chunk: string): void {
     const lines = (cursor.markerPending + chunk).split('\n')
@@ -83,20 +94,35 @@ export class GptLogWatcher {
     for (const raw of lines) {
       if (dropping) { dropping = false; continue }
       const line = raw.replace(/\r$/, '')
-      const start = /^=== \[YAL-GPT\] start (\S+) model=\S+ ===$/.exec(line)
-      const end = /^=== \[YAL-GPT\] end (\S+) exit=-?\d+ ===$/.exec(line)
+      const start = gptStartMarker(line)
+      const end = gptEndMarker(line)
+      const orderRun = /^=== \[YAL-GPT\] order .* run=([0-9a-f]{16,}) ===$/.exec(line)?.[1]
+      if (start?.runId || end?.runId || orderRun) {
+        if (!cursor.hasRunIds) { cursor.markers = {}; cursor.sessionId = undefined }
+        cursor.hasRunIds = true
+        cursor.legacyOutstanding = []
+      }
       const session = /^session id: ([0-9a-f-]{36})$/i.exec(line)
       if (session) cursor.sessionId = session[1]
       if (start) {
+        if (start.runId ? cursor.outstanding.has(start.runId) || cursor.ended.has(start.runId) : cursor.hasRunIds) continue
         cursor.sessionId = undefined
-        const since = Date.parse(start[1])
-        cursor.outstanding.push(Number.isFinite(since) ? since : null)
+        const since = Date.parse(start.startedAt)
+        if (start.runId) cursor.outstanding.set(start.runId, Number.isFinite(since) ? since : null)
+        else cursor.legacyOutstanding.push(Number.isFinite(since) ? since : null)
+        cursor.markers = { start: line }
       }
-      // End markers have no task identity, so consume starts in observed order.
-      else if (end) cursor.outstanding.shift()
-      if (/^=== \[YAL-GPT\] start \S+ model=\S+ ===$/.test(line)) cursor.markers = { start: line }
-      else if (cursor.markers.start && /^=== \[YAL-GPT\] order .* ===$/.test(line)) cursor.markers.order = line.slice(0, 512)
-      else if (cursor.markers.start && /^=== \[YAL-GPT\] end \S+ exit=-?\d+ ===$/.test(line)) cursor.markers.end = line
+      else if (end) {
+        if (end.runId) {
+          cursor.outstanding.delete(end.runId)
+          cursor.ended.add(end.runId)
+          if (cursor.ended.size > 256) cursor.ended.delete(cursor.ended.values().next().value!)
+        } else if (!cursor.hasRunIds) cursor.legacyOutstanding.shift()
+      }
+      const contextRun = cursor.markers.start ? gptStartMarker(cursor.markers.start)?.runId : undefined
+      if (cursor.markers.start && /^=== \[YAL-GPT\] order .* ===$/.test(line)
+        && (cursor.hasRunIds ? Boolean(orderRun) && orderRun === contextRun : !orderRun)) cursor.markers.order = line.slice(0, 512)
+      else if (end && cursor.markers.start && (cursor.hasRunIds ? Boolean(end.runId) && end.runId === contextRun : !end.runId)) cursor.markers.end = line
     }
     cursor.markerDropping = dropping || pending.length > 2048
     cursor.markerPending = cursor.markerDropping ? '' : pending
@@ -186,14 +212,16 @@ export class GptLogWatcher {
       let bytes = Buffer.concat(segments)
       if (start > 0) { const newline = bytes.indexOf(10); bytes = newline < 0 ? Buffer.alloc(0) : bytes.subarray(newline + 1) }
       let text = new StringDecoder('utf8').write(bytes)
-      if (limit > 0 && cursor.markers.start && !/^=== \[YAL-GPT\] start /m.test(text)) {
+      const tailLines = text.split('\n').map(line => line.replace(/\r$/, ''))
+      if (limit > 0 && cursor.markers.start && !tailLines.some(line => { const start = gptStartMarker(line); return start && (!cursor.hasRunIds || start.runId) })) {
+        const contextRun = gptStartMarker(cursor.markers.start)?.runId
         const context = [cursor.markers.start, cursor.markers.order,
-          /^=== \[YAL-GPT\] end /m.test(text) ? undefined : cursor.markers.end].filter(Boolean)
+          tailLines.some(line => { const end = gptEndMarker(line); return end && end.runId === contextRun }) ? undefined : cursor.markers.end].filter(Boolean)
         text = context.join('\n') + '\n' + text
       }
-      return { text, revision: cursor.revision,
+      return { text, revision: cursor.revision, hasRunIds: cursor.hasRunIds, legacyIdleMs: this.legacyIdleMs, lastOutputAt: cursor.lastOutputAt,
         updatedAt: Math.max(cursor.mtime, cursor.rotated?.mtime ?? 0) }
-    } catch { return { text: '', revision: cursor.revision, updatedAt: cursor.mtime } }
+    } catch { return { text: '', revision: cursor.revision, updatedAt: cursor.mtime, hasRunIds: cursor.hasRunIds, legacyIdleMs: this.legacyIdleMs, lastOutputAt: cursor.lastOutputAt } }
   }
   clear(id: string): void {
     this.path(id)

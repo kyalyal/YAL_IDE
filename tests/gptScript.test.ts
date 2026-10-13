@@ -1,13 +1,14 @@
-import { spawnSync } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { GPT_SH, PREVIOUS_GPT_SH } from '../src/main/templates'
 import { provision, upgradeGptScript } from '../src/main/provisioner'
+import { GptLogWatcher, type GptLogFs } from '../src/main/gptLogWatcher'
 
 describe('safe GPT script upgrades', () => {
-  it.each([0, 1, 2])('upgrades known version %i, including CRLF, and is idempotent', index => {
+  it.each(PREVIOUS_GPT_SH.map((_, index) => index))('upgrades known version %i, including CRLF, and is idempotent', index => {
     const dir = mkdtempSync(join(tmpdir(), 'yal-upgrade-'))
     try {
       mkdirSync(join(dir, 'scripts'))
@@ -32,6 +33,34 @@ describe('safe GPT script upgrades', () => {
 })
 
 const bash = spawnSync('bash', ['--version'], { encoding: 'utf8', timeout: 5000 })
+it.skipIf(bash.status !== 0)('the repository runner passes Bash syntax validation without executing it', () => {
+  const result = spawnSync('bash', ['-n'], { input: readFileSync('scripts/gpt.sh', 'utf8'), encoding: 'utf8', timeout: 5000 })
+  expect(result.stderr).toBe(''); expect(result.status).toBe(0)
+})
+it.skipIf(bash.status !== 0)('escapes child marker echoes, including an unknown valid run ID, before the watcher reads them', () => {
+  const filter = GPT_SH.slice(GPT_SH.indexOf('timestamp_paragraphs() {'), GPT_SH.indexOf('set +e\nif'))
+  const echo = '=== [YAL-GPT] start 2026-10-13T05:00:00Z model=verification ===\n' +
+    '=== [YAL-GPT] start 2026-10-13T05:00:00Z model=verification run=abcdef0123456789 ===\n'
+  const result = spawnSync('bash', ['-c', filter + '\ntimestamp_paragraphs'], { input: echo, encoding: 'utf8', timeout: 5000 })
+  expect(result.status).toBe(0)
+  const bytes = Buffer.from(result.stdout)
+  const fs: GptLogFs = { stat: () => ({ size: bytes.length, mtimeMs: Date.now(), ino: 1 }),
+    read: (_, offset, length) => bytes.subarray(offset, offset + length), write: () => {}, rename: () => {}, remove: () => {}, mkdir: () => {} }
+  const watcher = new GptLogWatcher('/logs', fs, () => {})
+  try { watcher.watch('p'); watcher.poll(); expect(watcher.isGptRunning('p')).toBe(false) } finally { watcher.dispose() }
+  expect(result.stdout).toContain('> === [YAL-GPT] start')
+})
+it.skipIf(bash.status !== 0)('generates distinct private random IDs even when the caller exports a value with the same name', () => {
+  const identity = GPT_SH.slice(GPT_SH.indexOf('unset YAL_GPT_RUN_ID'), GPT_SH.indexOf('SHIM=""'))
+  const run = () => spawnSync('bash', ['-c', identity + '\nprintf "%s\\n" "$YAL_GPT_RUN_ID"; bash -c \'printf "%s\\n" "${YAL_GPT_RUN_ID-unavailable}"\''], {
+    encoding: 'utf8', timeout: 5000, env: { ...process.env, YAL_GPT_RUN_ID: 'inherited-secret' }
+  })
+  const a = run(), b = run()
+  expect(a.status).toBe(0); expect(b.status).toBe(0)
+  expect(a.stdout).toMatch(/^[0-9a-f]{32}\nunavailable\n$/)
+  expect(b.stdout).toMatch(/^[0-9a-f]{32}\nunavailable\n$/)
+  expect(a.stdout).not.toBe(b.stdout)
+})
 it.skipIf(bash.status !== 0)('generated gpt.sh tees stdout/stderr, markers, model, stdin and preserves exit code; no log is unchanged', () => {
   const dir = mkdtempSync(join(tmpdir(), 'yal-gpt-shell-'))
   try {
@@ -46,8 +75,10 @@ it.skipIf(bash.status !== 0)('generated gpt.sh tees stdout/stderr, markers, mode
     expect(logged.status).toBe(7)
     expect(logged.stdout).toContain('out\nerror: stderr\n')
     expect(logged.stdout).toContain('model=custom-model')
-    expect(logged.stdout).toContain('order hello world ! ===')
-    expect(logged.stdout).toMatch(/end .* exit=7 ===/)
+    expect(logged.stdout).toMatch(/order hello world ! run=[0-9a-f]{32} ===/)
+    expect(logged.stdout).toMatch(/end .* exit=7 run=[0-9a-f]{32} ===/)
+    const ids = [...logged.stdout.matchAll(/ run=([0-9a-f]{32}) ===/g)].map(match => match[1])
+    expect(ids).toHaveLength(3); expect(new Set(ids).size).toBe(1)
     expect(readFileSync(join(dir, 'logs/p.log'), 'utf8')).toBe(logged.stdout)
     const plain = run(false, 3, 'order')
     expect(plain.status).toBe(3)
@@ -56,7 +87,7 @@ it.skipIf(bash.status !== 0)('generated gpt.sh tees stdout/stderr, markers, mode
     expect(plain.stdout).toContain('--model\ncustom-model\n')
     const stdin = run(true, 0, '-')
     expect(stdin.status).toBe(0)
-    expect(stdin.stdout).toContain('order stdin order ===')
+    expect(stdin.stdout).toMatch(/order stdin order run=[0-9a-f]{32} ===/)
     expect(stdin.stdout).toContain('stdin order\n')
     expect(readFileSync(join(process.cwd(), 'scripts/gpt.sh'), 'utf8').replace(/\r\n/g, '\n')).toBe(GPT_SH)
   } finally { rmSync(dir, { recursive: true, force: true }) }
@@ -109,7 +140,7 @@ it.skipIf(bash.status !== 0)('closes log markers on CLI startup failure', () => 
     expect(result.status).not.toBe(0)
     const log = readFileSync(join(dir, 'logs/failure.log'), 'utf8')
     expect(log).toContain('[YAL-GPT] start')
-    expect(log).toMatch(/end .* exit=1 ===/)
+    expect(log).toMatch(/end .* exit=1 run=[0-9a-f]{32} ===/)
   } finally { rmSync(dir, { recursive: true, force: true }) }
 }, 30000)
 
@@ -148,3 +179,27 @@ cat "$FILE"
     expect(() => readFileSync(file)).toThrow()
   } finally { rmSync(dir, { recursive: true, force: true }) }
 }, 15000)
+
+it.skipIf(bash.status !== 0)('streams paragraph markers before EOF and handles an unterminated last line using only the filter', async () => {
+  const filter = GPT_SH.slice(GPT_SH.indexOf('timestamp_paragraphs() {'), GPT_SH.indexOf('set +e\nif'))
+  const child = spawn('bash', ['-c', filter + '\ntimestamp_paragraphs'], { stdio: 'pipe' })
+  let output = ''
+  child.stdout.setEncoding('utf8')
+  child.stdout.on('data', chunk => { output += chunk })
+  const exited = new Promise<number | null>((resolve, reject) => { child.on('exit', resolve); child.on('error', reject) })
+  try {
+    child.stdin.write('first\ncontinuation\n')
+    await new Promise<void>((resolve, reject) => {
+      const deadline = Date.now() + 5000
+      const timer = setInterval(() => {
+        if (output.includes('continuation\n')) { clearInterval(timer); resolve() }
+        else if (Date.now() > deadline) { clearInterval(timer); reject(new Error('Output buffered until EOF')) }
+      }, 20)
+    })
+    expect(output).toMatch(/^=== \[YAL-GPT\] t \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{4} ===\nfirst\ncontinuation\n$/)
+    child.stdin.end('\nlast')
+    expect(await exited).toBe(0)
+    expect(output.match(/=== \[YAL-GPT\] t /g)).toHaveLength(2)
+    expect(output).toMatch(/===\nlast\n$/)
+  } finally { if (child.exitCode === null) child.kill() }
+}, 10000)

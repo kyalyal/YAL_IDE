@@ -1,4 +1,4 @@
-export type ProjectKind = 'planning' | 'dev' | 'manage'
+export type ProjectKind = 'assets' | 'dev' | 'manage'
 
 export interface ProjectRecord {
   id: string
@@ -7,7 +7,7 @@ export interface ProjectRecord {
   addedAt: string
   pinned?: boolean
   kind?: ProjectKind
-  linkedPlanningId?: string
+  linkedAssetsId?: string
 }
 
 export interface ProjectView extends ProjectRecord {
@@ -48,14 +48,6 @@ export type AddProjectResult =
 
 export type StartTerminalResult = { ok: true; buffer: string } | { ok: false; reason: string }
 
-export type PlanningSyncStatusView =
-  | { linked: false }
-  | { linked: true; error: string }
-  | { linked: true; state: 'no-baseline' | 'clean' | 'changed'; changed: number; added: number; modified: number; removed: number; pending: boolean }
-export type PlanningSyncFailure = { ok: false; reason: 'invalid-project' | 'unlinked' | 'terminal-not-running' | 'busy' | 'no-changes' | 'nothing-pending' | 'file-conflict' | 'error'; message?: string }
-export type PlanningSyncActionResult = { ok: true } | PlanningSyncFailure
-export type PlanningApplyResult = { ok: true; count: number } | PlanningSyncFailure
-
 export const IPC = {
   manageInfo: 'manage:info',
   saveMaster: 'master:save',
@@ -67,11 +59,7 @@ export const IPC = {
   openProjectsRoot: 'projects:open-root',
   setProjectPinned: 'projects:pin',
   removeProject: 'projects:remove',
-  setLinkedPlanning: 'projects:set-linked-planning',
-  planningSyncStatus: 'planning:sync-status',
-  planningApply: 'planning:apply',
-  planningMarkSynced: 'planning:mark-synced',
-  planningSetBaseline: 'planning:set-baseline',
+  setLinkedAssets: 'projects:set-linked-assets',
   openMaster: 'master:open',
   readMaster: 'master:read',
   checkEnv: 'env:check',
@@ -96,11 +84,7 @@ export interface YalApi {
   chooseProjectsRoot(): Promise<string | null>
   openProjectsRoot(): Promise<void>
   setProjectPinned(id: string, pinned: boolean): Promise<ProjectView[]>
-  setLinkedPlanning(devId: string, planningId: string | null): Promise<ProjectView[]>
-  planningSyncStatus(devId: string): Promise<PlanningSyncStatusView>
-  applyPlanningChanges(devId: string): Promise<PlanningApplyResult>
-  markPlanningSynced(devId: string): Promise<PlanningSyncActionResult>
-  setPlanningBaseline(devId: string): Promise<PlanningSyncActionResult>
+  setLinkedAssets(devId: string, assetsId: string | null): Promise<ProjectView[]>
   manageInfo(): Promise<{ projectPath: string; storagePath: string }>
   saveMaster(space: ProjectKind, content: string): Promise<void>
   openMaster(space?: ProjectKind): Promise<void>

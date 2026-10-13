@@ -1,3 +1,4 @@
+import { APP_RELOAD_IPC, type AppReloadApi, type BuildStatus } from '../shared/appReload'
 import { contextBridge, ipcRenderer } from 'electron'
 import { GPT_LOG_IPC, type GptLogApi, type GptLogAppend } from '../shared/gptLog'
 import { SKILLS_IPC, type SkillsApi, type SkillSpaceSyncStatus } from '../shared/skills'
@@ -16,11 +17,7 @@ const api: YalApi = {
   chooseProjectsRoot: () => ipcRenderer.invoke(IPC.chooseProjectsRoot),
   openProjectsRoot: () => ipcRenderer.invoke(IPC.openProjectsRoot),
   setProjectPinned: (id, pinned) => ipcRenderer.invoke(IPC.setProjectPinned, id, pinned),
-  setLinkedPlanning: (devId, planningId) => ipcRenderer.invoke(IPC.setLinkedPlanning, devId, planningId),
-  planningSyncStatus: devId => ipcRenderer.invoke(IPC.planningSyncStatus, devId),
-  applyPlanningChanges: devId => ipcRenderer.invoke(IPC.planningApply, devId),
-  markPlanningSynced: devId => ipcRenderer.invoke(IPC.planningMarkSynced, devId),
-  setPlanningBaseline: devId => ipcRenderer.invoke(IPC.planningSetBaseline, devId),
+  setLinkedAssets: (devId, assetsId) => ipcRenderer.invoke(IPC.setLinkedAssets, devId, assetsId),
   openMaster: space => ipcRenderer.invoke(IPC.openMaster, space),
   readMaster: space => ipcRenderer.invoke(IPC.readMaster, space),
   removeProject: (id) => ipcRenderer.invoke(IPC.removeProject, id),
@@ -149,3 +146,14 @@ const exportApi: ExportApi = {
 }
 
 contextBridge.exposeInMainWorld('yalExport', exportApi)
+
+const appReloadApi: AppReloadApi = {
+  reload: () => ipcRenderer.invoke(APP_RELOAD_IPC.reload),
+  status: () => ipcRenderer.invoke(APP_RELOAD_IPC.status),
+  onChanged: callback => {
+    const handler = (_event: unknown, status: BuildStatus): void => callback(status)
+    ipcRenderer.on(APP_RELOAD_IPC.changed, handler)
+    return () => ipcRenderer.removeListener(APP_RELOAD_IPC.changed, handler)
+  }
+}
+contextBridge.exposeInMainWorld('yalApp', appReloadApi)

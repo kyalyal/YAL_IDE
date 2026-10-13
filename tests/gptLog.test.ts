@@ -19,10 +19,10 @@ describe('GPT log parser', () => {
     expect(job.lines[1]).toHaveLength(2000)
     expect(job.lines[2]).toContain('nonsense')
   })
-  it('marks an unfinished job stalled only after 30 minutes of silence', () => {
+  it('marks a legacy unfinished job stalled only after five minutes of silence', () => {
     const lastActivityAt = Date.parse('2026-10-12T01:20:00Z')
-    expect(parseGptLog(start, { now: lastActivityAt + 30 * 60_000, lastActivityAt })[0].state).toBe('running')
-    expect(parseGptLog(start, { now: lastActivityAt + 30 * 60_000 + 1, lastActivityAt })[0].state).toBe('stalled')
+    expect(parseGptLog(start, { now: lastActivityAt + 5 * 60_000, lastActivityAt })[0].state).toBe('running')
+    expect(parseGptLog(start, { now: lastActivityAt + 5 * 60_000 + 1, lastActivityAt })[0].state).toBe('stalled')
   })
   it('does not keep an earlier unfinished job running because a newer job is active', () => {
     const next = start.replace('01:00:00', '02:00:00')
@@ -32,6 +32,7 @@ describe('GPT log parser', () => {
 })
 
 function fixture(cap = 5 * 1024 * 1024) {
+  vi.useFakeTimers(); vi.setSystemTime(100)
   const files = new Map<string, Buffer>()
   const modified = new Map<string, number>()
   let mtime = 1
@@ -191,14 +192,16 @@ describe('GPT log watcher', () => {
     expect(f.watcher.gptRunningSince('p')).toBeNull()
     f.watcher.dispose()
   })
-  it('expires only past the 30 minute mtime boundary, even with old start timestamps', () => {
+  it('expires legacy activity and since only past the five minute output boundary, even with old start timestamps', () => {
     const f = fixture(); f.put(start); f.watcher.poll()
     const mtime = f.fs.stat(f.watcher.path('p')).mtimeMs
-    expect(f.watcher.isGptRunning('p', mtime + 30 * 60_000)).toBe(true)
-    expect(f.watcher.isGptRunning('p', mtime + 30 * 60_000 + 1)).toBe(false)
+    expect(f.watcher.isGptRunning('p', mtime + 5 * 60_000)).toBe(true)
+    expect(f.watcher.isGptRunning('p', mtime + 5 * 60_000 + 1)).toBe(false)
     expect(f.watcher.gptRunningSince('p')).toBe(Date.parse('2026-10-12T01:00:00Z'))
-    const clock = vi.spyOn(Date, 'now').mockReturnValue(mtime + 30 * 60_000 + 1)
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(mtime + 5 * 60_000 + 1)
     expect(f.watcher.isGptRunning('p')).toBe(false)
+    expect(f.watcher.gptRunningSince('p')).toBeNull()
+    expect(f.watcher.activity('p').active).toBe(false)
     clock.mockRestore(); f.watcher.dispose()
   })
   it('resets task count on replacement, disappearance, clear and removal', () => {
@@ -237,12 +240,43 @@ describe('GPT log watcher', () => {
     vi.spyOn(f.fs, 'stat').mockImplementation(p => ({ ...stat(p), mtimeMs: p === path ? 10_000_000 : stat(p).mtimeMs }))
     const watcher = new GptLogWatcher('/logs', f.fs, () => {})
     watcher.watch('p'); watcher.poll()
-    expect(watcher.isGptRunning('p', oldMtime + 30 * 60_000 + 1)).toBe(false)
+    expect(watcher.isGptRunning('p', oldMtime + 5 * 60_000 + 1)).toBe(false)
+    expect(watcher.gptRunningSince('p', oldMtime + 5 * 60_000 + 1)).toBeNull()
     expect(watcher.gptRunningSince('p')).toBe(Date.parse('2026-10-12T01:00:00Z'))
     f.fs.write(path + '.1', Buffer.from(start + start + end(0) + 'live output\n')); watcher.poll()
     expect(watcher.isGptRunning('p', 100)).toBe(true)
     f.fs.write(path + '.1', Buffer.from(start + start + end(0) + 'live output\n' + end(0))); watcher.poll()
     expect(watcher.gptRunningSince('p')).toBeNull()
+    watcher.dispose()
+  })
+
+  it('matches modern identities through split lines, rotation and late writes on the tee handle', () => {
+    const f = fixture(64), path = f.watcher.path('p')
+    const run = '0123456789abcdef0123456789abcdef'
+    const modernStart = start.replace(' ===', ` run=${run} ===`)
+    const modernEnd = end(0).replace(' ===', ` run=${run} ===`)
+    f.put(modernStart.slice(0, 80)); f.watcher.poll()
+    expect(f.watcher.isGptRunning('p')).toBe(false)
+    f.files.set(path + '.1', Buffer.from(modernStart)); f.watcher.poll()
+    expect(f.watcher.isGptRunning('p')).toBe(true)
+    f.files.set(path + '.1', Buffer.from(modernStart + modernStart + modernEnd)); f.watcher.poll()
+    expect(f.watcher.isGptRunning('p')).toBe(false)
+    f.put(start + modernStart); f.watcher.poll()
+    expect(f.watcher.activity('p')).toMatchObject({ active: false, since: null })
+    f.watcher.dispose()
+  })
+
+  it('recovers ended identities from backup at startup and keeps ignoring legacy output after rotation', () => {
+    const f = fixture(); f.watcher.dispose()
+    const path = f.watcher.path('p'), run = '0123456789abcdef0123456789abcdef'
+    const modernStart = start.replace(' ===', ` run=${run} ===`)
+    const modernEnd = end(0).replace(' ===', ` run=${run} ===`)
+    f.fs.write(path + '.1', Buffer.from(start + modernStart + modernEnd))
+    f.put(start + modernStart)
+    const watcher = new GptLogWatcher('/logs', f.fs, () => {})
+    watcher.watch('p'); watcher.poll()
+    expect(watcher.isGptRunning('p')).toBe(false)
+    expect(watcher.activity('p')).toMatchObject({ active: false, since: null })
     watcher.dispose()
   })
 

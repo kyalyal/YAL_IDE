@@ -33,10 +33,10 @@ it('installs the exact standalone tool, syncs on startup and CLI changes, and br
   expect(state.handlers.size).toBe(9)
   expect([...state.handlers.keys()].sort()).toEqual(['skills:save', 'skills:remove', 'skills:list', 'skills:get', 'skills:history', 'skills:readVersion', 'skills:log', 'skills:syncStatus', 'skills:openWindow'].sort())
   const startupStatus = state.handlers.get(SKILLS_IPC.syncStatus)!({}, 'dev')
-  expect(startupStatus).toMatchObject({ state: 'ok', skills: 2, projects: { total: 1, applied: 1, failed: 0 }, conflicts: [], failures: [] })
+  expect(startupStatus).toMatchObject({ state: 'ok', skills: 3, projects: { total: 1, applied: 1, failed: 0 }, conflicts: [], failures: [] })
   for (const send of state.sends) expect(send).toHaveBeenCalledWith(SKILLS_IPC.syncStatus, startupStatus)
   const initial = state.handlers.get(SKILLS_IPC.list)!({}, 'dev')
-  expect(initial).toHaveLength(2)
+  expect(initial).toHaveLength(3)
   expect(initial.every((skill: { appliedProjects: number }) => skill.appliedProjects === 1)).toBe(true)
   const source = join(root, 'input.md'), text = '---\nname: test\ndescription: CLI live test\n---\nhello\n'
   writeFileSync(source, text)
@@ -47,7 +47,7 @@ it('installs the exact standalone tool, syncs on startup and CLI changes, and br
   await vi.waitFor(() => expect(readFileSync(join(project, '.claude/skills/test/SKILL.md'), 'utf8')).toBe(text), { timeout: 3000 })
   for (const send of state.sends) expect(send).toHaveBeenCalledWith(SKILLS_IPC.changed)
   const status = state.handlers.get(SKILLS_IPC.syncStatus)!({}, 'dev')
-  expect(status).toMatchObject({ state: 'ok', skills: 3, projects: { total: 1, applied: 1, failed: 0 }, conflicts: [], failures: [] })
+  expect(status).toMatchObject({ state: 'ok', skills: 4, projects: { total: 1, applied: 1, failed: 0 }, conflicts: [], failures: [] })
   expect(new Date(status.lastSyncAt).toISOString()).toBe(status.lastSyncAt)
   for (const send of state.sends) expect(send).toHaveBeenCalledWith(SKILLS_IPC.syncStatus, status)
   expect(state.handlers.get(SKILLS_IPC.history)!({}, 'dev', 'test')).toEqual([1])
@@ -115,31 +115,31 @@ it('installs only the builtins for each space and preserves migrated collaborati
   const legacy = new SkillStore(join(root, 'userData', 'skills'))
   legacy.apply({ name: 'yal-collaboration', content: '---\nname: yal-collaboration\ndescription: Legacy\n---\nkeep', author: 'system', summary: 'Legacy' })
   runtime = startSkillsSystem(join(root, 'userData'), () => [], () => null, () => 'ko')
-  expect(runtime.stores.dev.list().map(s => s.name).sort()).toEqual(['yal-collaboration', 'yal-mobile-web-game'])
-  expect(runtime.stores.planning.list().map(s => s.name)).toEqual(['yal-game-planning'])
+  expect(runtime.stores.dev.list().map(s => s.name).sort()).toEqual(['yal-collaboration', 'yal-game-planning', 'yal-mobile-web-game'])
+  expect(runtime.stores.assets.list().map(s => s.name)).toEqual(['yal-asset-factory'])
   expect(runtime.stores.dev.get('yal-collaboration')?.content).toContain('keep')
-  expect(JSON.parse(readFileSync(join(runtime.stores.dev.rootDir, '.builtins.json'), 'utf8'))).toEqual({ 'yal-mobile-web-game': 1, 'yal-collaboration': 3 })
-  expect(JSON.parse(readFileSync(join(runtime.stores.planning.rootDir, '.builtins.json'), 'utf8'))).toEqual({ 'yal-game-planning': 2 })
+  expect(JSON.parse(readFileSync(join(runtime.stores.dev.rootDir, '.builtins.json'), 'utf8'))).toEqual({ 'yal-mobile-web-game': 1, 'yal-collaboration': 3, 'yal-game-planning': 3 })
+  expect(JSON.parse(readFileSync(join(runtime.stores.assets.rootDir, '.builtins.json'), 'utf8'))).toEqual({ 'yal-asset-factory': 2 })
 })
 it('isolates canonical writes, watcher syncs, IPC reads and status events in both directions', async () => {
   root = mkdtempSync(join(tmpdir(), 'yal-runtime-'))
-  const dev = join(root, 'dev'), planning = join(root, 'planning')
+  const dev = join(root, 'dev'), planning = join(root, 'assets')
   mkdirSync(dev); mkdirSync(planning)
-  runtime = startSkillsSystem(join(root, 'userData'), () => [{ path: dev, kind: 'dev' }, { path: planning, kind: 'planning' }], () => null, () => 'ko')
+  runtime = startSkillsSystem(join(root, 'userData'), () => [{ path: dev, kind: 'dev' }, { path: planning, kind: 'assets' }], () => null, () => 'ko')
   await new Promise(resolve => setTimeout(resolve, 400))
-  expect(readdirSync(join(dev, '.claude/skills'))).toEqual(['yal-collaboration', 'yal-mobile-web-game'])
-  expect(readdirSync(join(planning, '.claude/skills'))).toEqual(['yal-game-planning'])
-  for (const space of ['planning', 'dev'] as const) {
-    const other = space === 'planning' ? 'dev' : 'planning'
-    const target = space === 'planning' ? planning : dev
-    const excluded = space === 'planning' ? dev : planning
+  expect(readdirSync(join(dev, '.claude/skills'))).toEqual(['yal-collaboration', 'yal-game-planning', 'yal-mobile-web-game'])
+  expect(existsSync(join(planning, '.claude/skills/yal-game-planning'))).toBe(false)
+  for (const space of ['assets', 'dev'] as const) {
+    const other = space === 'assets' ? 'dev' : 'assets'
+    const target = space === 'assets' ? planning : dev
+    const excluded = space === 'assets' ? dev : planning
     const before = state.handlers.get(SKILLS_IPC.syncStatus)!({}, other)
     for (const send of state.sends) send.mockClear()
     const content = `---\nname: test\ndescription: ${space}\n---\n${space}`
     runtime.stores[space].apply({ name: 'test', content, author: 'gpt', summary: space })
     await vi.waitFor(() => expect(readFileSync(join(target, '.claude/skills/test/SKILL.md'), 'utf8')).toBe(content), { timeout: 3000 })
-    expect(existsSync(join(excluded, '.claude/skills/test/SKILL.md'))).toBe(other === 'planning')
-    if (other === 'planning') expect(readFileSync(join(excluded, '.claude/skills/test/SKILL.md'), 'utf8')).toContain('planning')
+    expect(existsSync(join(excluded, '.claude/skills/test/SKILL.md'))).toBe(other === 'assets')
+    if (other === 'assets') expect(readFileSync(join(excluded, '.claude/skills/test/SKILL.md'), 'utf8')).toContain('assets')
     expect(state.handlers.get(SKILLS_IPC.syncStatus)!({}, other)).toBe(before)
     const status = state.handlers.get(SKILLS_IPC.syncStatus)!({}, space)
     expect(status).toMatchObject({ space, projects: { total: 1, applied: 1, failed: 0 } })
@@ -159,8 +159,9 @@ it('isolates canonical writes, watcher syncs, IPC reads and status events in bot
   expect(state.handlers.get(SKILLS_IPC.syncStatus)!({}, 'dev')).toBe(status)
 })
 
-it('ships the planning builtin in Korean within eight lines', () => {
-  const content = BUILTIN_SKILLS.planning[0].content
+it('retains the legacy planning builtin in Korean for migration without installing it in assets', () => {
+  expect(BUILTIN_SKILLS.assets.some(skill => skill.name === 'yal-game-planning')).toBe(false)
+  const content = readFileSync('src/main/skills/builtin/yal-game-planning-v2.txt', 'utf8')
   expect(content.split('\n').filter(Boolean).length).toBeLessThanOrEqual(8)
   expect(content).toContain('name: yal-game-planning')
   expect(content).toContain('기획서')
@@ -204,10 +205,10 @@ it('allows management edits with history while refusing planning and dev mutatio
   expect(save({}, 'manage', 'own', second)).toMatchObject({ changed: true, version: 2 })
   expect(runtime.stores.manage.readVersion('own', 1)).toBe(first)
   expect(runtime.stores.manage.log()[0]).toMatchObject({ author: 'user', action: 'update' })
-  for (const space of ['dev', 'planning']) {
+  for (const space of ['dev', 'assets']) {
     expect(() => save({}, space, 'own', first)).toThrow()
     expect(() => remove({}, space, 'own')).toThrow()
-    expect(runtime.stores[space as 'dev' | 'planning'].get('own')).toBeNull()
+    expect(runtime.stores[space as 'dev' | 'assets'].get('own')).toBeNull()
   }
   expect(remove({}, 'manage', 'own')).toMatchObject({ action: 'remove' })
 })

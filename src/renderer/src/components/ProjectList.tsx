@@ -16,11 +16,10 @@ interface Props {
   activities?: Record<string, ProjectActivity>
   now?: number
   pendingIds?: string[]
-  planningChanges?: Record<string, number>
   onSelect(id: string): void
   onAdd(kind: ProjectKind): void
   onCreate(name: string, kind: ProjectKind): Promise<AddProjectResult>
-  onLinkedPlanning(id: string, planningId: string | null): Promise<void>
+  onLinkedAssets(id: string, assetsId: string | null): Promise<void>
   onPin(project: ProjectView): Promise<void>
   onRemove(project: ProjectView): void
   onOpenSettings(): void
@@ -37,11 +36,10 @@ export function ProjectList({
   activities = {},
   now = Date.now(),
   pendingIds = [],
-  planningChanges = {},
   onSelect,
   onAdd,
   onCreate,
-  onLinkedPlanning,
+  onLinkedAssets,
   onPin,
   onRemove,
   onOpenSettings,
@@ -94,8 +92,8 @@ export function ProjectList({
       const height = bounds.height - 5
       // Both tracks have a 64px minimum; a shorter grid has no movable boundary.
       if (height <= 128) return
-      const planningHeight = Math.max(64, Math.min(event.clientY - bounds.top - drag.offset, height - 64))
-      setSpaceRatio(clampSpaceRatio(planningHeight / height))
+      const assetsHeight = Math.max(64, Math.min(event.clientY - bounds.top - drag.offset, height - 64))
+      setSpaceRatio(clampSpaceRatio(assetsHeight / height))
     }}
     onPointerUp={event => finishSpaceDrag(event.pointerId)}
     onPointerCancel={event => finishSpaceDrag(event.pointerId)}
@@ -181,7 +179,7 @@ export function ProjectList({
     <aside className="sidebar" style={style}>
       <div className="project-spaces" ref={spaces}
         style={{ gridTemplateRows: `minmax(64px, ${spaceRatio}fr) 5px minmax(64px, ${1 - spaceRatio}fr) minmax(105px, .35fr)` }}>
-      {(['planning', 'dev', 'manage'] as const).map(kind => {
+      {(['assets', 'dev', 'manage'] as const).map(kind => {
         const orderedProjects = groups[kind]
         const splitIndex = pinnedSplitIndex(orderedProjects)
         return <Fragment key={kind}>
@@ -190,8 +188,8 @@ export function ProjectList({
       <div className="sidebar-header">
         <span>{t(kind)}</span>
         {kind !== 'manage' && <button ref={node => { addButtons.current[kind] = node }} className="icon-btn"
-          title={t(kind === 'planning' ? 'addPlanningProject' : 'addDevProject')}
-          aria-label={t(kind === 'planning' ? 'addPlanningProject' : 'addDevProject')}
+          title={t(kind === 'assets' ? 'addAssetsProject' : 'addDevProject')}
+          aria-label={t(kind === 'assets' ? 'addAssetsProject' : 'addDevProject')}
           aria-expanded={menuOpen === kind} aria-controls={`project-add-menu-${kind}`} disabled={busy || formOpen === kind}
           onClick={() => { focusKind.current = kind; setMenuOpen(open => open === kind ? null : kind) }}>
           +
@@ -201,7 +199,7 @@ export function ProjectList({
       {kind === 'manage' && <small className="manage-hint">연결·규칙 경로는 설정에서 변경합니다.</small>}
       {menuOpen === kind && <div id={`project-add-menu-${kind}`} ref={menu} className="project-add-menu"
         onKeyDown={event => { if (event.key === 'Escape') { setMenuOpen(null); addButtons.current[focusKind.current]?.focus() } }}>
-        <button onClick={() => { setMenuOpen(null); setFormOpen(kind); setName(''); setRoot(''); setError('') }}>{t(kind === 'planning' ? 'newPlanningProject' : 'newProject')}</button>
+        <button onClick={() => { setMenuOpen(null); setFormOpen(kind); setName(''); setRoot(''); setError('') }}>{t(kind === 'assets' ? 'newAssetsProject' : 'newProject')}</button>
         <button onClick={() => { setMenuOpen(null); onAdd(kind) }}>{t('existingFolder')}</button>
       </div>}
       {formOpen === kind && <form className="project-create-form" onSubmit={event => { event.preventDefault(); void submit() }}
@@ -227,7 +225,7 @@ export function ProjectList({
         {orderedProjects.map((p, index) => {
           const derived = deriveActivity(activities[p.id] ?? { status: statuses[p.id] ?? 'idle', lastActivityAt: 0, gptRunning: false, gptSince: null }, now)
           const status = derived.state
-          const label = status === 'idle' ? '' : activityLabel(derived, t)
+          const label = activityLabel(derived, t)
           return (
           <Fragment key={p.id}>
           {index === splitIndex && <li className="project-group-divider" role="separator" />}
@@ -244,18 +242,19 @@ export function ProjectList({
             <div className="project-identity">
               <span className="project-name">{p.name}</span>
               {p.selfRepository && <small className="manage-warning">⚠ IDE 저장소</small>}
-              {kind === 'dev' && p.id === selectedId ? <select className="planning-link" aria-label={t('planningLink')}
-                value={p.linkedPlanningId ?? ''} onClick={event => event.stopPropagation()}
-                onChange={event => { void onLinkedPlanning(p.id, event.target.value || null).catch(() => setError(t('projectActionError'))) }}>
-                <option value="">{t('noPlanningLink')}</option>
-                {groups.planning.map(plan => <option key={plan.id} value={plan.id}>{plan.name}</option>)}
-              </select> : kind === 'dev' && p.linkedPlanningId && groups.planning.some(plan => plan.id === p.linkedPlanningId) &&
-                <small className="planning-link-name">🔗 {groups.planning.find(plan => plan.id === p.linkedPlanningId)?.name}</small>}
+              {kind === 'dev' && p.id === selectedId ? <label className="assets-link-label"><span>{t('assetsLink')}</span><select className="assets-link" aria-label={t('assetsLink')}
+                value={groups.assets.some(asset => asset.id === p.linkedAssetsId) ? p.linkedAssetsId : ''} onClick={event => event.stopPropagation()}
+                onChange={event => { void onLinkedAssets(p.id, event.target.value || null).catch(() => setError(t('projectActionError'))) }}>
+                <option value="">{t('noAssetsLink')}</option>
+                {groups.assets.map(plan => <option key={plan.id} value={plan.id}>{plan.name}</option>)}
+              </select></label> : kind === 'dev' && p.linkedAssetsId && groups.assets.some(plan => plan.id === p.linkedAssetsId) &&
+                <small className="assets-link-name">🔗 {groups.assets.find(plan => plan.id === p.linkedAssetsId)?.name}</small>}
+              <div className="project-labels">
+                <span className={'status-label ' + status}>{label}</span>
+                {pendingIds.includes(p.id) && <span className="activity-deferred">{t('activityDeferred')}</span>}
+                {!p.exists && <span className="badge-missing">{t('missingPath')}</span>}
+              </div>
             </div>
-            {kind === 'dev' && p.linkedPlanningId && planningChanges[p.id] > 0 && <span className="planning-change-label">{t('planningListChanged', { count: planningChanges[p.id] })}</span>}
-            {label && <span className={'status-label ' + status}>{label}</span>}
-            {pendingIds.includes(p.id) && <span className="activity-deferred">{t('activityDeferred')}</span>}
-            {!p.exists && <span className="badge-missing">{t('missingPath')}</span>}
             <button className={'icon-btn pin' + (p.pinned ? ' pinned' : '')}
               title={t(pinLabel(p.pinned))} aria-label={t(pinLabel(p.pinned))} aria-pressed={p.pinned === true}
               disabled={kind === 'manage' || pinning.includes(p.id)}

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, statSync, realpathSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, statSync, realpathSync, readdirSync } from 'node:fs'
 import { dirname, join, relative, resolve, isAbsolute } from 'node:path'
 import { SkillStore } from './skillStore'
 import { atomicWrite } from './atomicWrite'
@@ -17,8 +17,11 @@ function contains(parent: string, child: string): boolean {
   return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel))
 }
 export function validateManageStorage(userData: string, storage: string): void {
-  for (const protectedPath of [join(userData, 'spaces/planning'), join(userData, 'spaces/dev'), join(userData, 'master'), join(userData, 'skills')]) {
-    if ([storage, join(storage, 'skills'), join(storage, 'master')].some(candidate => contains(candidate, protectedPath) || contains(protectedPath, candidate))) throw new Error('관리 저장소는 기획/개발 규칙 저장소와 겹칠 수 없습니다.')
+  const spaces = join(userData, 'spaces')
+  // Preserve both the legacy source (failed migration) and timestamped archives.
+  const archived = existsSync(spaces) ? readdirSync(spaces).filter(name => name.startsWith('planning-migrated-')).map(name => join(spaces, name)) : []
+  for (const protectedPath of [join(spaces, 'assets'), join(userData, 'spaces/planning'), join(spaces, 'planning-migrated'), join(spaces, 'dev'), join(userData, 'master'), join(userData, 'skills'), ...archived]) {
+    if ([storage, join(storage, 'skills'), join(storage, 'master')].some(candidate => contains(candidate, protectedPath) || contains(protectedPath, candidate))) throw new Error('관리 저장소는 에셋/개발 규칙 저장소와 겹칠 수 없습니다.')
   }
 }
 export class ManageSpace {
@@ -32,7 +35,7 @@ export class ManageSpace {
     this.store = new SkillStore(join(storage, 'skills'))
     this.masterPath = join(storage, 'master/MASTER.md')
     mkdirSync(dirname(this.masterPath), { recursive: true })
-    if (!existsSync(this.masterPath)) atomicWrite(this.masterPath, '# YAL_IDE 관리 규칙\n\n' + EXECUTOR_RULES + '\n관리 공간의 규칙은 기획/개발 공간과 독립적이다. IDE 코드 수정은 빌드 및 재시작 후 반영한다.\n')
+    if (!existsSync(this.masterPath)) atomicWrite(this.masterPath, '# YAL_IDE 관리 규칙\n\n' + EXECUTOR_RULES + '\n관리 공간의 규칙은 에셋/개발 공간과 독립적이다. IDE 코드 수정은 빌드 및 재시작 후 반영한다.\n')
   }
   project(): ProjectView {
     let exists = false

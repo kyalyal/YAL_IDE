@@ -54,7 +54,7 @@ it('polls activity and updates list/header elapsed every second with deferred co
     snapshot = { p: { ...snapshot.p, status: 'done', gptRunning: true, gptSince: 99000 } }
     await advance(1000)
     expect(ui.host.querySelector('.dot.waiting-gpt')).not.toBeNull()
-    expect(ui.host.querySelector('.terminal-column-header')?.textContent).toContain('GPT 결과 대기 중')
+    expect(ui.host.querySelector('.terminal-column-header')?.textContent).toContain('GPT 작업중')
     expect(ui.host.querySelector('.activity-elapsed')?.textContent).toBe('2\ucd08 \uacbd\uacfc')
     expect(ui.host.textContent).toContain('완료 알림 대기 중')
     await advance(1000)
@@ -122,7 +122,7 @@ it('renders quiet and input labels and updates quiet minutes from now', async ()
   const props = { projects: [project], selectedId: null, runningIds: [], statuses: {},
     activities: { p: { ...snapshot.p, lastActivityAt: 1000 } }, now: 91000,
     onSelect: vi.fn(), onAdd: vi.fn(), onCreate: vi.fn(), onPin: vi.fn(), onRemove: vi.fn(),
-    onLinkedPlanning: vi.fn(), onOpenSettings: vi.fn(), onOpenSkills: vi.fn() }
+    onLinkedAssets: vi.fn(), onOpenSettings: vi.fn(), onOpenSkills: vi.fn() }
   const ui = await mount(createElement(ProjectList, props))
   try {
     expect(ui.host.querySelector('.dot.working')).not.toBeNull()
@@ -165,8 +165,8 @@ it('protects optimistic acknowledgement from a poll already in flight', async ()
     vi.mocked(window.yal.projectActivity).mockReturnValueOnce(request.promise); await advance(1000)
     await click(ui.host.querySelector('.project-item'))
     await act(async () => request.resolve(snapshot))
-    expect(ui.host.querySelector('.dot.idle')).not.toBeNull()
-    expect(ui.host.querySelector('.claude-activity.idle')).not.toBeNull()
+    expect(ui.host.querySelector('.dot.waiting-gpt')).not.toBeNull()
+    expect(ui.host.querySelector('.claude-activity.waiting-gpt')).not.toBeNull()
     expect(ui.host.textContent).not.toContain('완료 알림 대기 중')
   } finally { await ui.close() }
 })

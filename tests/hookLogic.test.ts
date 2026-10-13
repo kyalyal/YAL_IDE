@@ -192,9 +192,9 @@ describe('yal-hook.cjs as a command', () => {
   })
 })
 
-it('clears unfinished Claude status on the authoritative idle notification without completing it', () => {
-  expect(nextStatus('working', 'Notification', { notification_type: 'idle_prompt' })).toBe('idle')
-  expect(nextStatus('attention', 'Notification', { notification_type: 'idle_prompt' })).toBe('idle')
+it('ignores idle notifications in every state without inferring interruption', () => {
+  expect(nextStatus('working', 'Notification', { notification_type: 'idle_prompt' })).toBeNull()
+  expect(nextStatus('attention', 'Notification', { notification_type: 'idle_prompt' })).toBeNull()
   expect(nextStatus('done', 'Notification', { notification_type: 'idle_prompt' })).toBeNull()
 })
 

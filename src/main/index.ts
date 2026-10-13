@@ -1,3 +1,6 @@
+import { resolveAssetsLink } from './assetsLink'
+import { APP_RELOAD_IPC } from '../shared/appReload'
+import { compareBuildTimes, readBuildTimes, reloadAppWindows } from './appReload'
 import { ClaudeInterruptMonitor } from './claudeInterruptMonitor'
 import { GptSessionActivity } from './gptSessionActivity'
 import { StallMonitor } from './stallMonitor'
@@ -31,9 +34,8 @@ import { SETTINGS_IPC, type AppSettingsPatch } from '../shared/settings'
 import { AppSettingsStore } from './settingsStore'
 import { openSettingsWindow } from './settingsWindow'
 import { startSkillsSystem } from './skillsRuntime'
-import { seedMaster, syncMaster, syncPlanningLinks } from './masterDoc'
-import { PlanningSync } from './planningSync'
-import { createPlanningSyncHandlers } from './planningSyncIpc'
+import { migrateSkillSpaces } from './assetsMigration'
+import { seedMaster, syncMaster, removeManagedPlanningFiles } from './masterDoc'
 import { updateSkillsWindowTitle } from './skillsWindow'
 import { shouldQuitAfterWindowsClosed } from './viewerLifecycle'
 import { EXPORT_IPC, type ExportConfig, type ExportPlatform, type ToolInstallRequest } from '../shared/exporter'
@@ -66,6 +68,26 @@ if (userDataArgument) {
   app.setPath('userData', resolve(userDataArgument))
 }
 
+const watchBuilds = !app.isPackaged && !process.env['ELECTRON_RENDERER_URL']
+const buildRoot = join(__dirname, '..')
+const startedBuild = readBuildTimes(buildRoot)
+let appliedBuild = startedBuild
+let buildTimer: ReturnType<typeof setInterval> | undefined
+const buildStatus = () => watchBuilds ? compareBuildTimes(startedBuild, appliedBuild, readBuildTimes(buildRoot))
+  : { reloadAvailable: false, restartRequired: false }
+function reloadApplication(): void {
+  appliedBuild = readBuildTimes(buildRoot)
+  reloadAppWindows(BrowserWindow.getAllWindows())
+}
+app.on('browser-window-created', (_event, window) => {
+  window.webContents.on('before-input-event', (event, input) => {
+    if (input.type === 'keyDown' && input.control && input.shift && !input.alt && input.key.toLowerCase() === 'r') {
+      event.preventDefault()
+      reloadApplication()
+    }
+  })
+})
+
 let win: BrowserWindow | null = null
 
 function createWindow(): void {
@@ -95,19 +117,39 @@ function createWindow(): void {
 }
 
 app.whenReady().then(async () => {
+  ipcMain.handle(APP_RELOAD_IPC.reload, reloadApplication)
+  ipcMain.handle(APP_RELOAD_IPC.status, buildStatus)
+  if (watchBuilds) {
+    let previous = JSON.stringify(readBuildTimes(buildRoot))
+    let sent = JSON.stringify(buildStatus())
+    buildTimer = setInterval(() => {
+      const current = JSON.stringify(readBuildTimes(buildRoot))
+      // Wait for two matching observations so a build's burst of writes settles.
+      if (current === previous) {
+        const status = buildStatus(), encoded = JSON.stringify(status)
+        if (encoded !== sent) {
+          sent = encoded
+          for (const window of BrowserWindow.getAllWindows()) {
+            if (!window.webContents.isDestroyed()) window.webContents.send(APP_RELOAD_IPC.changed, status)
+          }
+        }
+      }
+      previous = current
+    }, 1000)
+  }
   ipcMain.handle(IPC.writeClipboardText, (_event, text: unknown) => {
     if (typeof text !== 'string') throw new TypeError('Clipboard text must be a string.')
     clipboard.writeText(text)
   })
   ipcMain.handle(IPC.readClipboardText, () => clipboard.readText())
   const userData = app.getPath('userData')
+  migrateSkillSpaces(userData)
   const registry = new ProjectRegistry(join(userData, 'projects.json'))
   const settingsStore = new AppSettingsStore(join(userData, 'app-settings.json'))
   const management = settingsStore.get().manage
   const manage = new ManageSpace(userData, app.getAppPath(), management?.projectPath, management?.storagePath)
   const allProjects = () => [...registry.list(), manage.project()]
   const getProject = (id: string) => id === MANAGE_ID ? manage.project() : registry.get(id)
-  const planningSync = new PlanningSync({ userData })
   const gptLogs = new GptLogWatcher(join(userData, 'gpt-logs'), nativeGptLogFs, event => {
     if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) win.webContents.send(GPT_LOG_IPC.append, event)
   })
@@ -222,16 +264,15 @@ app.whenReady().then(async () => {
     } catch (error) { console.error('Project import reinforcement failed:', project.path, error) }
   }
   const resyncMaster = (): void => {
+    for (const project of registry.list()) removeManagedPlanningFiles(project.path)
     const result = syncMaster(masterPath, registry.list())
     for (const error of result.errors) console.error('MASTER sync failed:', error)
   }
   const resyncProjects = (): void => {
     skills.resync()
     resyncMaster()
-    syncPlanningLinks(registry.list())
   }
   resyncMaster()
-  syncPlanningLinks(registry.list())
   let masterWatcher: FSWatcher | undefined
   let masterTimer: ReturnType<typeof setTimeout> | undefined
   let masterClosed = false
@@ -255,12 +296,11 @@ app.whenReady().then(async () => {
   })
   const requireKind = (kind: unknown): ProjectKind => {
     if (kind === undefined) return 'dev'
-    if (kind !== 'dev' && kind !== 'planning') throw new Error('Invalid project kind')
+    if (kind !== 'dev' && kind !== 'assets') throw new Error('Invalid project kind')
     return kind
   }
-  ipcMain.handle(IPC.setLinkedPlanning, (_event, devId: string, planningId: string | null) => {
-    planningHandlers.setLinkedPlanning(devId, planningId)
-    resyncProjects()
+  ipcMain.handle(IPC.setLinkedAssets, (_event, devId: string, assetsId: string | null) => {
+    registry.setLinkedAssets(devId, assetsId)
     return allProjects()
   })
   ipcMain.handle(IPC.openMaster, async (_event, space?: ProjectKind) => {
@@ -452,19 +492,15 @@ app.whenReady().then(async () => {
       extraArgs: nodeStatus.installed ? ['--settings', hooks.settingsPath] : [],
       argsFor: (id) => {
         const project = getProject(id)
-        if (project?.kind === 'manage') return ['--append-system-prompt', 'Claude는 디렉터다. 사용자와 대화하고 GPT에게 지시하고 결과를 검수하며 필요하면 재명령한다. 관리 공간 규칙은 환경변수 YAL_MASTER_PATH의 MD와 YAL_SKILLS_DIR의 SKILL.md들을 읽어 적용한다. 기획/개발 공유 규칙은 사용하거나 수정하지 않는다. GPT 수행자에게 질문·제안·재호출을 요구하지 않는다.']
-        if (project?.kind !== 'dev' || !project.linkedPlanningId) return []
-        const planning = registry.get(project.linkedPlanningId)
-        if (planning?.kind !== 'planning') return []
-        try {
-          return statSync(planning.path).isDirectory() ? ['--add-dir', planning.path] : []
-        } catch {
-          return []
-        }
+        if (project?.kind === 'manage') return ['--append-system-prompt', 'Claude는 디렉터다. 사용자와 대화하고 GPT에게 지시하고 결과를 검수하며 필요하면 재명령한다. 관리 공간 규칙은 환경변수 YAL_MASTER_PATH의 MD와 YAL_SKILLS_DIR의 SKILL.md들을 읽어 적용한다. 에셋/개발 공유 규칙은 사용하거나 수정하지 않는다. GPT 수행자에게 질문·제안·재호출을 요구하지 않는다.']
+        const assets = resolveAssetsLink(project, registry)
+        return assets ? ['--add-dir', assets.dir] : []
       },
       envFor: (id) => {
-        const space = getProject(id)?.kind ?? 'dev'
-        return { YAL_PROJECT_ID: id, YAL_STATUS_DIR: hooks.statusDir, YAL_GPT_LOG: gptLogs.path(id), YAL_SKILLS_DIR: skills.stores[space].rootDir, YAL_SPACE: space, YAL_SKILL_TOOL: skills.toolPath, YAL_PERMISSION: settingsStore.get().permissions?.[id] ?? 'workspace-write', YAL_MASTER_PATH: space === 'manage' ? manage.masterPath : masterPath }
+        const project = getProject(id)
+        const space = project?.kind ?? 'dev'
+        const assets = resolveAssetsLink(project, registry)
+        return { ...(assets ? { YAL_ASSETS_DIR: assets.dir } : {}), YAL_PROJECT_ID: id, YAL_STATUS_DIR: hooks.statusDir, YAL_GPT_LOG: gptLogs.path(id), YAL_SKILLS_DIR: skills.stores[space].rootDir, YAL_SPACE: space, YAL_SKILL_TOOL: skills.toolPath, YAL_PERMISSION: settingsStore.get().permissions?.[id] ?? 'workspace-write', YAL_MASTER_PATH: space === 'manage' ? manage.masterPath : masterPath }
       }
     },
     {
@@ -484,12 +520,6 @@ app.whenReady().then(async () => {
       if (!['working', 'attention'].includes(tracker.get(id))) stalls.clear(id)
     }
   }, 1000)
-
-  const planningHandlers = createPlanningSyncHandlers({ registry, sync: planningSync, terminals, tracker })
-  ipcMain.handle(IPC.planningSyncStatus, (_event, devId: string) => planningHandlers.status(devId))
-  ipcMain.handle(IPC.planningApply, (_event, devId: string) => planningHandlers.apply(devId))
-  ipcMain.handle(IPC.planningMarkSynced, (_event, devId: string) => planningHandlers.markSynced(devId))
-  ipcMain.handle(IPC.planningSetBaseline, (_event, devId: string) => planningHandlers.setBaseline(devId))
 
   ipcMain.handle(IPC.listProjects, allProjects)
 
@@ -524,7 +554,6 @@ app.whenReady().then(async () => {
   ipcMain.handle(IPC.removeProject, (_e, id: string) => {
     requireGptProject(id)
     if (id === MANAGE_ID) throw new Error('관리 프로젝트 연결은 설정에서 변경합니다.')
-    const planningCleanup = planningHandlers.projectsForRemoval(id)
     exporter.cancel(id)
     exportSettings.remove(id)
     devServers.stop(id)
@@ -537,7 +566,6 @@ app.whenReady().then(async () => {
     gptUpgrades.delete(id)
     tracker.reset(id)
     registry.remove(id)
-    planningHandlers.cleanupProjects(planningCleanup)
     resyncProjects()
   })
 
@@ -556,7 +584,7 @@ app.whenReady().then(async () => {
     return Object.fromEntries(allProjects().map(({ id }) => {
       const detail = tracker.detail(id)
       return [id, { status: detail.state, lastActivityAt: detail.ts,
-        gptRunning: gptLogs.isGptRunning(id, now), gptSince: gptLogs.gptRunningSince(id), stallSuspected: stalls.suspected(id) }]
+        gptRunning: gptLogs.isGptRunning(id, now), gptSince: gptLogs.gptRunningSince(id, now), stallSuspected: stalls.suspected(id) }]
     }))
   })
   ipcMain.handle(IPC.acknowledgeProject, (_e, id: string) => tracker.acknowledge(id))
@@ -585,9 +613,9 @@ app.whenReady().then(async () => {
   )
 
   app.on('before-quit', () => {
+    clearInterval(buildTimer)
     clearInterval(stallTimer)
     clearInterval(interruptTimer)
-    planningHandlers.dispose()
     gptLogs.dispose()
     cleanupProcessTrees()
     devServers.stopAll()

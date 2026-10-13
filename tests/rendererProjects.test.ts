@@ -14,28 +14,28 @@ beforeEach(() => {
 })
 afterEach(() => vi.unstubAllGlobals())
 
-const project = (id: string, kind: 'planning' | 'dev', extra = {}): ProjectView =>
+const project = (id: string, kind: 'assets' | 'dev', extra = {}): ProjectView =>
   ({ id, kind, name: id, path: `C:/Projects/${id}`, exists: true, addedAt: '', ...extra })
 function props(projects: ProjectView[] = []) {
   return { projects, selectedId: null as string | null, runningIds: [], statuses: {}, onSelect: vi.fn(),
     onAdd: vi.fn(), onCreate: vi.fn().mockResolvedValue({ ok: true }), onPin: vi.fn(), onRemove: vi.fn(),
-    onLinkedPlanning: vi.fn().mockResolvedValue(undefined), onOpenSettings: vi.fn(), onOpenSkills: vi.fn() }
+    onLinkedAssets: vi.fn().mockResolvedValue(undefined), onOpenSettings: vi.fn(), onOpenSkills: vi.fn() }
 }
 it('renders planning above dev, and each menu adds and creates in its own kind', async () => {
-  const callbacks = props([project('plan', 'planning'), project('game', 'dev')])
+  const callbacks = props([project('plan', 'assets'), project('game', 'dev')])
   const ui = await mount(createElement(ProjectList, callbacks))
   try {
     const sections = [...ui.host.querySelectorAll('section')]
-    expect(sections.map(section => section.getAttribute('aria-label'))).toEqual(['기획', '개발', 'YAL_IDE 관리'])
+    expect(sections.map(section => section.getAttribute('aria-label'))).toEqual(['에셋', '개발', 'YAL_IDE 관리'])
     expect(sections[0].textContent).toContain('plan')
     expect(sections[0].textContent).not.toContain('game')
-    for (const [index, kind] of ['planning', 'dev'].entries()) {
+    for (const [index, kind] of ['assets', 'dev'].entries()) {
       const section = sections[index]
       await click(section.querySelector('.sidebar-header button'))
       await click(button(section, '기존 폴더 추가'))
       expect(callbacks.onAdd).toHaveBeenLastCalledWith(kind)
       await click(section.querySelector('.sidebar-header button'))
-      await click(button(section, index === 0 ? '새 기획 프로젝트' : '새 프로젝트 만들기'))
+      await click(button(section, index === 0 ? '새 에셋 프로젝트' : '새 프로젝트 만들기'))
       expect(ui.host.querySelectorAll('form')).toHaveLength(1)
       await change(section.querySelector('input')!, `new-${kind}`)
       await act(async () => section.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })))
@@ -44,31 +44,32 @@ it('renders planning above dev, and each menu adds and creates in its own kind',
   } finally { await ui.close() }
 })
 it('only selected dev shows a link picker, forwards link and unlink, and displays linked names', async () => {
-  const callbacks = props([project('plan', 'planning'), project('game', 'dev', { linkedPlanningId: 'plan' })])
+  const callbacks = props([project('plan', 'assets'), project('game', 'dev', { linkedAssetsId: 'plan' })])
   const ui = await mount(createElement(ProjectList, callbacks))
   try {
     expect(ui.host.querySelector('select')).toBeNull()
     expect(ui.host.textContent).toContain('🔗 plan')
     await ui.render(createElement(ProjectList, { ...callbacks, selectedId: 'game' }))
     const select = ui.host.querySelector('select')!
-    expect(select.getAttribute('aria-label')).toBe('기획 링크')
+    expect(select.getAttribute('aria-label')).toBe('에셋 연결')
+    expect(ui.host.querySelector('label.assets-link-label')?.textContent).toContain('에셋 연결')
     expect([...select.options].map(option => option.textContent)).toEqual(['링크 없음', 'plan'])
     await change(select, '')
-    expect(callbacks.onLinkedPlanning).toHaveBeenLastCalledWith('game', null)
+    expect(callbacks.onLinkedAssets).toHaveBeenLastCalledWith('game', null)
     await change(select, 'plan')
-    expect(callbacks.onLinkedPlanning).toHaveBeenLastCalledWith('game', 'plan')
+    expect(callbacks.onLinkedAssets).toHaveBeenLastCalledWith('game', 'plan')
     expect(callbacks.onSelect).not.toHaveBeenCalled()
     await ui.render(createElement(ProjectList, { ...callbacks, selectedId: 'plan' }))
     expect(ui.host.querySelector('select')).toBeNull()
   } finally { await ui.close() }
 })
 it('moves the single creation form between spaces and retains pin, removal and status controls', async () => {
-  const callbacks = props([project('plan', 'planning', { pinned: true, exists: false }), project('game', 'dev')])
+  const callbacks = props([project('plan', 'assets', { pinned: true, exists: false }), project('game', 'dev')])
   const ui = await mount(createElement(ProjectList, { ...callbacks, runningIds: ['plan'], statuses: { plan: 'working' as const, game: 'done' as const } }))
   try {
     const sections = ui.host.querySelectorAll('section')
     await click(sections[0].querySelector('.sidebar-header button'))
-    await click(button(sections[0], '새 기획 프로젝트'))
+    await click(button(sections[0], '새 에셋 프로젝트'))
     await click(sections[1].querySelector('.sidebar-header button'))
     await click(button(sections[1], '새 프로젝트 만들기'))
     expect(ui.host.querySelectorAll('form')).toHaveLength(1)
@@ -85,21 +86,22 @@ it('moves the single creation form between spaces and retains pin, removal and s
   } finally { await ui.close() }
 })
 it('App persists a planning link through YalApi and refreshes the rendered list', async () => {
-  const projects = [project('plan', 'planning', { exists: false }), project('game', 'dev', { exists: false })]
+  const projects = [project('plan', 'assets', { exists: false }), project('game', 'dev', { exists: false })]
   Object.assign(window.yal, {
     listProjects: vi.fn().mockResolvedValue(projects), checkEnv: vi.fn().mockResolvedValue([]),
     runningTerminals: vi.fn().mockResolvedValue([]), projectActivity: vi.fn().mockResolvedValue({}),
-    setLinkedPlanning: vi.fn().mockResolvedValue([projects[0], { ...projects[1], linkedPlanningId: 'plan' }])
+    setLinkedAssets: vi.fn().mockResolvedValue([projects[0], { ...projects[1], linkedAssetsId: 'plan' }])
   })
   window.yalViewer = { hideViewer: vi.fn().mockResolvedValue(undefined) } as unknown as typeof window.yalViewer
   Object.assign(window.yalSettings, { get: vi.fn().mockResolvedValue({}) })
   const ui = await mount(createElement(App))
   try {
     await click(ui.host.querySelector('.project-space.dev .project-item'))
-    await change(ui.host.querySelector('select.planning-link')!, 'plan')
-    expect(window.yal.setLinkedPlanning).toHaveBeenLastCalledWith('game', 'plan')
-    expect(ui.host.querySelector<HTMLSelectElement>('select.planning-link')!.value).toBe('plan')
-    await click(ui.host.querySelector('.project-space.planning .project-item'))
+    await change(ui.host.querySelector('select.assets-link')!, 'plan')
+    expect(window.yal.setLinkedAssets).toHaveBeenLastCalledWith('game', 'plan')
+    expect(ui.host.querySelector<HTMLSelectElement>('select.assets-link')!.value).toBe('plan')
+    expect(ui.host.querySelector('.planning-sync-badge, .planning-sync-action, .planning-change-label')).toBeNull()
+    await click(ui.host.querySelector('.project-space.assets .project-item'))
     expect(ui.host.textContent).toContain('🔗 plan')
   } finally { await ui.close() }
 })
@@ -107,15 +109,15 @@ it('App persists a planning link through YalApi and refreshes the rendered list'
 describe('project list presentation', () => {
   it('splits spaces and preserves stable pin ordering independently without mutating input', () => {
     const projects = [
-      { id: 'd1', kind: 'dev' as const }, { id: 'p1', kind: 'planning' as const },
-      { id: 'd2', kind: 'dev' as const, pinned: true }, { id: 'p2', kind: 'planning' as const, pinned: true },
-      { id: 'p3', kind: 'planning' as const, pinned: true }, { id: 'd3', kind: 'dev' as const }
+      { id: 'd1', kind: 'dev' as const }, { id: 'p1', kind: 'assets' as const },
+      { id: 'd2', kind: 'dev' as const, pinned: true }, { id: 'p2', kind: 'assets' as const, pinned: true },
+      { id: 'p3', kind: 'assets' as const, pinned: true }, { id: 'd3', kind: 'dev' as const }
     ]
     const result = splitByKind(projects)
-    expect(result.planning.map(p => p.id)).toEqual(['p2', 'p3', 'p1'])
+    expect(result.assets.map(p => p.id)).toEqual(['p2', 'p3', 'p1'])
     expect(result.dev.map(p => p.id)).toEqual(['d2', 'd1', 'd3'])
     expect(projects.map(p => p.id)).toEqual(['d1', 'p1', 'd2', 'p2', 'p3', 'd3'])
-    expect(splitByKind([])).toEqual({ planning: [], dev: [], manage: [] })
+    expect(splitByKind([])).toEqual({ assets: [], dev: [], manage: [] })
   })
   it('places a separator only between nonempty pinned and unpinned groups', () => {
     expect(pinnedSplitIndex(orderProjects([{ pinned: false }, { pinned: true }, { pinned: true }]))).toBe(2)
@@ -138,4 +140,26 @@ describe('project list presentation', () => {
     expect(projectTargetPath('C:\\Projects\\', '  게임')).toBe('C:\\Projects\\게임')
     expect(projectTargetPath('/home/projects/', 'game one')).toBe('/home/projects/game one')
   })
+})
+
+it('places both activity labels under the name inside the project identity', async () => {
+  const callbacks = props([project('game', 'dev')])
+  const ui = await mount(createElement(ProjectList, { ...callbacks, pendingIds: ['game'], activities: { game: { status: 'done' as const, lastActivityAt: Date.now(), gptRunning: true, gptSince: Date.now() } } }))
+  try {
+    const identity = ui.host.querySelector('.project-identity')!
+    expect(identity.querySelector('.project-name')?.textContent).toBe('game')
+    expect(identity.querySelector('.project-labels .status-label')?.textContent).toBe(translate('ko', 'activityWaitingGpt'))
+    expect(identity.querySelector('.project-labels .activity-deferred')?.textContent).toBe(translate('ko', 'activityDeferred'))
+  } finally { await ui.close() }
+})
+
+it('shows no link for a deleted or wrong-kind target after refreshing projects', async () => {
+  const game = project('game', 'dev', { linkedAssetsId: 'deleted' })
+  const ui = await mount(createElement(ProjectList, { ...props([game]), selectedId: 'game' }))
+  try {
+    expect(ui.host.querySelector<HTMLSelectElement>('select.assets-link')!.value).toBe('')
+    expect(ui.host.querySelector<HTMLSelectElement>('select.assets-link')!.selectedOptions[0].textContent).toBe('링크 없음')
+    await ui.render(createElement(ProjectList, { ...props([game, project('deleted', 'dev')]), selectedId: 'game' }))
+    expect(ui.host.querySelector<HTMLSelectElement>('select.assets-link')!.value).toBe('')
+  } finally { await ui.close() }
 })

@@ -485,6 +485,9 @@ function appendSkillLog(store, entry) {
 }
 function isSkillStoreBusy(store) { return !store.recoverLock() }
 function runCli(args, env = process.env) {
+  if (env.YAL_SPACE !== undefined && !['assets', 'dev', 'manage'].includes(env.YAL_SPACE)) {
+    throw new Error(`Invalid YAL_SPACE=${env.YAL_SPACE}; allowed values: assets|dev|manage. The legacy planning space is no longer supported.`)
+  }
   const [command, ...rest] = args
   if ((command === 'set' || command === 'remove') && !rest.includes('--approved')) {
     throw new Error('Skill changes require user approval. Ask the user whether to update the skill, then rerun with --approved.')

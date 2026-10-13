@@ -50,3 +50,23 @@ it('does not cache invalid rects and resets after unmount and hide', async () =>
   const next = await mount(createElement(ViewerPane, { projectId: 'a' }))
   try { await flush(); expect(show).toHaveBeenCalledTimes(2) } finally { await next.close() }
 })
+
+it('restores the initial viewer bounds before a background animation frame runs', async () => {
+  const ui = await mount(createElement(ViewerPane, { projectId: 'reload' }))
+  try {
+    expect(show).toHaveBeenCalledTimes(1)
+    expect(show).toHaveBeenLastCalledWith('reload', { x: 10, y: 20, width: 500, height: 400 })
+    await flush()
+    expect(show).toHaveBeenCalledTimes(1)
+  } finally { await ui.close() }
+})
+
+it('resynchronizes layout changes from restored renderer state without waiting for a frame', async () => {
+  const ui = await mount(createElement(ViewerPane, { projectId: 'reload' }))
+  await flush()
+  try {
+    rect = { ...rect, y: 80.1 }
+    await ui.render(createElement(ViewerPane, { projectId: 'reload' }))
+    expect(show).toHaveBeenLastCalledWith('reload', { x: 10, y: 80, width: 500, height: 400 })
+  } finally { await ui.close() }
+})

@@ -34,27 +34,29 @@ function ProjectViewer({ projectId }: { projectId: string }) {
     sentBounds.current = null
     let frame: number | null = null
     let disposed = false
-    const schedule = () => {
-      if (frame !== null || disposed) return
-      frame = requestAnimationFrame(() => {
-        frame = null
-        const el = stage.current
-        if (!el || disposed) return
-        const bounds = roundedViewerBounds(el.getBoundingClientRect())
-        if (!bounds || (sentBounds.current?.projectId === projectId &&
-          sameViewerBounds(sentBounds.current.bounds, bounds))) return
-        const sent = { projectId, bounds: { ...bounds } }
-        const request = window.yalViewer.showViewer(projectId, bounds)
-        sentBounds.current = sent
-        void request.catch((reason: unknown) => {
-          if (!disposed) {
-            if (sentBounds.current === sent) sentBounds.current = null
-            setBoundsError(String(reason))
-          }
-        })
+    const report = () => {
+      const el = stage.current
+      if (!el || disposed) return
+      const bounds = roundedViewerBounds(el.getBoundingClientRect())
+      if (!bounds || (sentBounds.current?.projectId === projectId &&
+        sameViewerBounds(sentBounds.current.bounds, bounds))) return
+      const sent = { projectId, bounds: { ...bounds } }
+      const request = window.yalViewer.showViewer(projectId, bounds)
+      sentBounds.current = sent
+      void request.catch((reason: unknown) => {
+        if (!disposed) {
+          if (sentBounds.current === sent) sentBounds.current = null
+          setBoundsError(String(reason))
+        }
       })
     }
-    reportBounds.current = schedule
+    const schedule = () => {
+      if (frame !== null || disposed) return
+      frame = requestAnimationFrame(() => { frame = null; report() })
+    }
+    // Reattach immediately after refresh, even while background frames are suspended.
+    report()
+    reportBounds.current = report
     const observer = new ResizeObserver(schedule)
     if (stage.current) observer.observe(stage.current)
     window.addEventListener('resize', schedule)

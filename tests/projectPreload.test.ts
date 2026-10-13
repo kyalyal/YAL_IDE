@@ -29,32 +29,28 @@ it('forwards project kinds, planning links and master methods using IPC constant
   vi.resetModules()
   await import('../src/preload/index')
   const api = mocks.expose.mock.calls.find(([name]) => name === 'yal')![1] as YalApi
-  await api.createProject('planning', 'planning')
-  expect(mocks.invoke).toHaveBeenLastCalledWith(IPC.createProject, 'planning', 'planning')
-  await api.addProject('planning')
-  expect(mocks.invoke).toHaveBeenLastCalledWith(IPC.addProject, 'planning')
+  await api.createProject('assets', 'assets')
+  expect(mocks.invoke).toHaveBeenLastCalledWith(IPC.createProject, 'assets', 'assets')
+  await api.addProject('assets')
+  expect(mocks.invoke).toHaveBeenLastCalledWith(IPC.addProject, 'assets')
   await api.addProject()
   expect(mocks.invoke).toHaveBeenLastCalledWith(IPC.addProject, 'dev')
-  await api.setLinkedPlanning('dev', 'planning')
-  expect(mocks.invoke).toHaveBeenLastCalledWith(IPC.setLinkedPlanning, 'dev', 'planning')
-  await api.setLinkedPlanning('dev', null)
-  expect(mocks.invoke).toHaveBeenLastCalledWith(IPC.setLinkedPlanning, 'dev', null)
+  await api.setLinkedAssets('dev', 'assets')
+  expect(mocks.invoke).toHaveBeenLastCalledWith(IPC.setLinkedAssets, 'dev', 'assets')
+  await api.setLinkedAssets('dev', null)
+  expect(mocks.invoke).toHaveBeenLastCalledWith(IPC.setLinkedAssets, 'dev', null)
   await api.openMaster()
   expect(mocks.invoke).toHaveBeenLastCalledWith(IPC.openMaster, undefined)
   await api.readMaster()
   expect(mocks.invoke).toHaveBeenLastCalledWith(IPC.readMaster, undefined)
 })
 
-it('forwards four planning actions with only devId through the exact channels', async () => {
+it('removes synchronization APIs and retains planning link selection', async () => {
   vi.resetModules()
+  mocks.expose.mockClear()
   await import('../src/preload/index')
-  const api = mocks.expose.mock.calls.find(([name]) => name === 'yal')![1] as YalApi
-  for (const [method, channel] of [
-    ['planningSyncStatus', 'planning:sync-status'], ['applyPlanningChanges', 'planning:apply'],
-    ['markPlanningSynced', 'planning:mark-synced'], ['setPlanningBaseline', 'planning:set-baseline']
-  ] as const) {
-    await api[method]('dev')
-    expect(mocks.invoke).toHaveBeenLastCalledWith(channel, 'dev')
-    expect(IPC[{ planningSyncStatus: 'planningSyncStatus', applyPlanningChanges: 'planningApply', markPlanningSynced: 'planningMarkSynced', setPlanningBaseline: 'planningSetBaseline' }[method] as keyof typeof IPC]).toBe(channel)
-  }
+  const api = mocks.expose.mock.calls.find(([name]) => name === 'yal')![1]
+  for (const method of ['planningSyncStatus', 'applyPlanningChanges', 'markPlanningSynced', 'setPlanningBaseline']) expect(api).not.toHaveProperty(method)
+  for (const key of ['planningSyncStatus', 'planningApply', 'planningMarkSynced', 'planningSetBaseline']) expect(IPC).not.toHaveProperty(key)
+  expect(api.setLinkedAssets).toBeTypeOf('function')
 })

@@ -58,14 +58,14 @@ describe('TerminalManager', () => {
     const seen: string[] = []
     const { mgr, spawned } = setup({
       platform, hasSession: () => true,
-      extraArgs: ['--settings', '/data/settings.json'],
-      argsFor: id => { seen.push(id); return ['--add-dir', '/planning folder'] }
+      extraArgs: ['--settings', '/data/settings.json', '--permission-mode', 'acceptEdits'],
+      argsFor: id => { seen.push(id); return ['--add-dir', '/assets folder'] }
     })
     mgr.start('p1', '/work/a')
     expect(seen).toEqual(['p1'])
     expect(spawned[0].args).toEqual([
       ...(platform === 'win32' ? ['/c', 'claude'] : []),
-      '--settings', '/data/settings.json', '--continue', '--add-dir', '/planning folder'
+      '--settings', '/data/settings.json', '--permission-mode', 'acceptEdits', '--continue', '--add-dir', '/assets folder'
     ])
   })
   it('starts plain `claude` in the project folder when there is no session', () => {

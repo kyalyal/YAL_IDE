@@ -1,10 +1,11 @@
 export type Lang = 'ko' | 'en'
 
 export type MessageKey =
-  | 'planningChanged' | 'planningListChanged' | 'planningNoBaseline' | 'planningClean' | 'planningPending' | 'planningApply' | 'planningApplyFull' | 'planningMarkSynced' | 'planningSetBaseline' | 'planningBusy' | 'planningTerminalOff' | 'planningNoChanges' | 'planningFileConflict'
+  | 'appReload' | 'appReloadHint' | 'appBuildAvailable' | 'appRestartRequired' | 'appReloadError'
   | 'activityWaitingGpt' | 'activityQuiet' | 'activityNeedsInput' | 'activitySeconds' | 'activityMinutes' | 'activityDeferred' | 'activityElapsed'
-  | 'manage' | 'planning' | 'dev' | 'newPlanningProject' | 'planningLink' | 'noPlanningLink' | 'masterMd' | 'openFile' | 'skillSpace'
-  | 'addPlanningProject' | 'addDevProject' | 'masterError'
+  | 'manage' | 'assets' | 'dev' | 'newAssetsProject' | 'assetsLink' | 'noAssetsLink' | 'masterMd' | 'openFile' | 'skillSpace'
+  | 'addAssetsProject' | 'addDevProject' | 'masterError'
+  | 'managementIsolationNote' | 'managementSkillsIsolationNote'
   | 'gptLogTitle' | 'gptRunning' | 'gptSuccess' | 'gptFailed' | 'gptWaiting' | 'gptStalled'
   | 'gptLogEmpty' | 'gptCopy' | 'gptCollapse' | 'gptExpand' | 'gptHeight' | 'gptExitCode'
   | 'gptOrderUnknown' | 'gptLogError' | 'gptCustomized' | 'gptUpgraded' | 'gptUpgradeError'
@@ -46,21 +47,11 @@ export type MessageKey =
 
 export const MESSAGES: Record<Lang, Record<MessageKey, string>> = {
   ko: {
-    planningChanged: '기획 변경 {count}건',
-    planningListChanged: '기획 변경 {count}',
-    planningNoBaseline: '기획 기준점 없음',
-    planningClean: '기획 최신',
-    planningPending: '반영 완료 대기',
-    planningApply: '기획 변경 반영',
-    planningApplyFull: '기획 전체 비교 반영',
-    planningMarkSynced: '반영 완료',
-    planningSetBaseline: '현재 기획을 기준점으로',
-    planningBusy: 'Claude가 작업 중입니다. 끝난 뒤 다시 눌러주세요.',
-    planningTerminalOff: '터미널이 실행 중이 아닙니다.',
-    planningNoChanges: '반영할 기획 변경이 없습니다.',
-    planningFileConflict: '기획 변경 파일 충돌: {message}',
+    appReload: '새로고침', appReloadHint: 'Ctrl+Shift+R · 터미널 작업을 유지하며 모든 앱 창을 새로고침합니다',
+    appBuildAvailable: '새 빌드 있음 · 새로고침', appRestartRequired: '메인이 바뀌었습니다 · 재시작 필요(터미널 작업 끊김)',
+    appReloadError: '새로고침 실패',
 
-    activityWaitingGpt: 'GPT 결과 대기 중', activityQuiet: '응답 없음 · {count}분', activityNeedsInput: '입력 필요',
+    activityWaitingGpt: 'GPT 작업중', activityQuiet: '응답 없음 · {count}분', activityNeedsInput: '입력 필요',
     activitySeconds: '{count}초', activityMinutes: '{count}분', activityDeferred: '완료 알림 대기 중',
     activityElapsed: '{duration} 경과',
     gptLogTitle: 'GPT 작업 로그', gptRunning: '실행 중', gptSuccess: '완료', gptFailed: '실패',
@@ -111,9 +102,11 @@ export const MESSAGES: Record<Lang, Record<MessageKey, string>> = {
     setupIos2: '터미널에서 xcode-select --install을 실행하세요.',
     setupIos3: '공식 CocoaPods 가이드(guides.cocoapods.org)를 따라 CocoaPods를 설치하세요.',
 
-    manage: 'YAL_IDE 관리', planning: '기획', dev: '개발', newPlanningProject: '새 기획 프로젝트', planningLink: '기획 링크',
-    noPlanningLink: '링크 없음', masterMd: '총괄 MD', openFile: '파일 열기', skillSpace: '스킬 공간',
-    addPlanningProject: '기획 프로젝트 추가', addDevProject: '개발 프로젝트 추가', masterError: '총괄 MD를 읽거나 열 수 없습니다.',
+    manage: 'YAL_IDE 관리', assets: '에셋', dev: '개발', newAssetsProject: '새 에셋 프로젝트', assetsLink: '에셋 연결',
+    noAssetsLink: '링크 없음', masterMd: '총괄 MD', openFile: '파일 열기', skillSpace: '스킬 공간',
+    addAssetsProject: '에셋 프로젝트 추가', addDevProject: '개발 프로젝트 추가', masterError: '총괄 MD를 읽거나 열 수 없습니다.',
+    managementIsolationNote: '경로 변경은 IDE 재시작 후 적용됩니다. 규칙은 에셋/개발 공간과 독립적으로 저장됩니다.',
+    managementSkillsIsolationNote: '관리 스킬은 여기에서 편집할 수 있습니다. 에셋/개발 스킬에는 영향을 주지 않습니다.',
     newProject: '새 프로젝트 만들기', existingFolder: '기존 폴더 추가', projectName: '프로젝트 이름',
     create: '만들기', cancel: '취소', creating: '만드는 중…', projectsRoot: '프로젝트 기본 위치',
     changeFolder: '변경…', resetFolder: '기본값으로', openFolder: '폴더 열기', projectActionError: '프로젝트 작업에 실패했습니다.',
@@ -169,12 +162,12 @@ export const MESSAGES: Record<Lang, Record<MessageKey, string>> = {
     console: '콘솔', errorsOnly: '오류만 보기', autoScroll: '자동 스크롤', clear: '지우기', errorCount: '오류 {count}개', noConsoleEntries: '콘솔 항목이 없습니다',
     saveStart: '저장 후 시작', retry: '다시 시도', hideViewer: '뷰어 숨기기', showViewer: '뷰어 보기', claudeTerminal: 'Claude 터미널',
     portrait: '세로 모드 ↻', landscape: '가로 모드 ↻', switchPortrait: '눌러서 세로 모드로 전환', switchLandscape: '눌러서 가로 모드로 전환',
-    sidebarWidth: '사이드바 너비', spaceRatio: '기획 공간 비율',
+    sidebarWidth: '사이드바 너비', spaceRatio: '에셋 공간 비율',
     gameViewer: '게임 뷰어', viewerWidth: '뷰어 너비', device: '기기', devCommand: '개발 서버 명령', setDevCommand: '개발 서버 명령을 설정하세요.',
     viewerEmpty: '개발 서버를 시작하면 게임이 여기에 표시됩니다', errorHistory: '보관된 콘솔 기록의 오류', gameConsole: '게임 콘솔',
     consoleLog: '로그', consoleInfo: '정보', consoleWarn: '경고', consoleDebug: '디버그',
     projects: '프로젝트', addProject: '프로젝트 추가', noProjects: '아직 프로젝트가 없습니다.', addFolderHint: '+ 버튼으로 폴더를 추가하세요.',
-    working: '작업 중', done: '작업 끝 · 확인', attention: '입력 필요', idle: '대기 중', noSession: '세션 없음', missingPath: '경로 없음', removeProject: '목록에서 제거', settingsShortcut: '설정 (Ctrl+,)',
+    working: '작업 중', done: '작업 끝 · 확인', attention: '입력 필요', idle: '대기중', noSession: '세션 없음', missingPath: '경로 없음', removeProject: '목록에서 제거', settingsShortcut: '설정 (Ctrl+,)',
     settings: '설정', settingsOpenError: '설정 창을 열지 못했습니다.',
     removeConfirm: '"{name}"을(를) 목록에서 제거할까요?\n실행 중인 Claude 세션은 종료되며, 폴더와 파일은 삭제하지 않습니다.',
     selectProject: '왼쪽에서 프로젝트를 선택하세요.', missingFolder: '폴더가 이동되었거나 삭제되었습니다. 목록에서 제거한 뒤 다시 추가하세요.',
@@ -190,21 +183,11 @@ export const MESSAGES: Record<Lang, Record<MessageKey, string>> = {
     previewSound: '{name} 미리 듣기', volume: '음량', soundAttention: '입력이 필요할 때도 소리 내기', testSound: '테스트 재생'
   },
   en: {
-    planningChanged: 'Planning changes: {count}',
-    planningListChanged: 'Planning changes: {count}',
-    planningNoBaseline: 'No planning baseline',
-    planningClean: 'Planning up to date',
-    planningPending: 'Awaiting completion',
-    planningApply: 'Apply planning changes',
-    planningApplyFull: 'Compare and apply full planning',
-    planningMarkSynced: 'Mark synced',
-    planningSetBaseline: 'Use current planning as baseline',
-    planningBusy: 'Claude is working. Try again after it finishes.',
-    planningTerminalOff: 'The terminal is not running.',
-    planningNoChanges: 'There are no planning changes to apply.',
-    planningFileConflict: 'Planning changes file conflict: {message}',
+    appReload: 'Refresh', appReloadHint: 'Ctrl+Shift+R · Refresh all app windows while keeping terminal jobs',
+    appBuildAvailable: 'New build available · Refresh', appRestartRequired: 'Main process changed · Restart required (terminal jobs interrupted)',
+    appReloadError: 'Refresh failed',
 
-    activityWaitingGpt: 'Waiting for GPT results', activityQuiet: 'No response · {count} min', activityNeedsInput: 'Input needed',
+    activityWaitingGpt: 'GPT working', activityQuiet: 'No response · {count} min', activityNeedsInput: 'Input needed',
     activitySeconds: '{count} sec', activityMinutes: '{count} min', activityDeferred: 'Completion notification pending',
     activityElapsed: '{duration} elapsed',
     gptLogTitle: 'GPT job log', gptRunning: 'Running', gptSuccess: 'Complete', gptFailed: 'Failed',
@@ -255,9 +238,11 @@ export const MESSAGES: Record<Lang, Record<MessageKey, string>> = {
     setupIos2: 'Run xcode-select --install in a terminal.',
     setupIos3: 'Install CocoaPods following the official guide at guides.cocoapods.org.',
 
-    manage: 'YAL_IDE 관리', planning: 'Planning', dev: 'Development', newPlanningProject: 'New planning project', planningLink: 'Planning link',
-    noPlanningLink: 'No link', masterMd: 'Master MD', openFile: 'Open file', skillSpace: 'Skill space',
-    addPlanningProject: 'Add planning project', addDevProject: 'Add development project', masterError: 'Unable to read or open the master MD.',
+    manage: 'YAL_IDE 관리', assets: 'Assets', dev: 'Development', newAssetsProject: 'New assets project', assetsLink: 'Assets link',
+    noAssetsLink: 'No link', masterMd: 'Master MD', openFile: 'Open file', skillSpace: 'Skill space',
+    addAssetsProject: 'Add assets project', addDevProject: 'Add development project', masterError: 'Unable to read or open the master MD.',
+    managementIsolationNote: 'Path changes take effect after restarting the IDE. Rules are stored independently of the Assets and Development spaces.',
+    managementSkillsIsolationNote: 'Management skills can be edited here. Assets and Development skills are unaffected.',
     newProject: 'Create new project', existingFolder: 'Add existing folder', projectName: 'Project name',
     create: 'Create', cancel: 'Cancel', creating: 'Creating…', projectsRoot: 'Default project location',
     changeFolder: 'Change…', resetFolder: 'Use default', openFolder: 'Open folder', projectActionError: 'The project operation failed.',
@@ -313,7 +298,7 @@ export const MESSAGES: Record<Lang, Record<MessageKey, string>> = {
     console: 'Console', errorsOnly: 'Errors only', autoScroll: 'Auto-scroll', clear: 'Clear', errorCount: '{count} errors', noConsoleEntries: 'No console entries',
     saveStart: 'Save & start', retry: 'Retry', hideViewer: 'Hide viewer', showViewer: 'Show viewer', claudeTerminal: 'Claude terminal',
     portrait: 'Portrait ↻', landscape: 'Landscape ↻', switchPortrait: 'Click to switch to portrait', switchLandscape: 'Click to switch to landscape',
-    sidebarWidth: 'Sidebar width', spaceRatio: 'Planning space ratio',
+    sidebarWidth: 'Sidebar width', spaceRatio: 'Assets space ratio',
     gameViewer: 'Game viewer', viewerWidth: 'Viewer width', device: 'Device', devCommand: 'Dev server command', setDevCommand: 'Set a dev server command.',
     viewerEmpty: 'Start the dev server to display the game here', errorHistory: 'Errors in the retained console history', gameConsole: 'Game console',
     consoleLog: 'log', consoleInfo: 'info', consoleWarn: 'warn', consoleDebug: 'debug',

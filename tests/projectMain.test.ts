@@ -106,20 +106,20 @@ it('preserves missing registered project folders on startup', () => {
   call(IPC.removeProject, 'missing')
 })
 it('creates/adds planning projects with their own terminal environment and syncs MASTER', async () => {
-  const created = call(IPC.createProject, 'planning', 'planning')
-  expect(created).toMatchObject({ ok: true, project: { kind: 'planning' } })
-  expect(provision).toHaveBeenCalledWith(created.project.path, 'planning', 'planning')
+  const created = call(IPC.createProject, 'assets', 'assets')
+  expect(created).toMatchObject({ ok: true, project: { kind: 'assets' } })
+  expect(provision).toHaveBeenCalledWith(created.project.path, 'assets', 'assets')
   expect(readFileSync(join(created.project.path, '.claude/yal-master.md'), 'utf8')).toBe(call(IPC.readMaster))
   expect(call(IPC.startTerminal, created.project.id, 80, 24).ok).toBe(true)
   expect(state.spawn.mock.calls.at(-1)?.[2]).toMatchObject({ env: {
-    YAL_SPACE: 'planning', YAL_SKILLS_DIR: join(state.userData, 'spaces/planning/skills')
+    YAL_SPACE: 'assets', YAL_SKILLS_DIR: join(state.userData, 'spaces/assets/skills')
   } })
   const path = join(root!, 'added-planning'); mkdirSync(path)
   state.dialog.mockResolvedValueOnce({ canceled: false, filePaths: [path] })
-  const added = await call(IPC.addProject, 'planning')
-  expect(added).toMatchObject({ ok: true, project: { kind: 'planning' } })
-  expect(provision).toHaveBeenCalledWith(path, 'added-planning', 'planning')
-  expect(existsSync(join(path, '.claude/skills/yal-game-planning/SKILL.md'))).toBe(true)
+  const added = await call(IPC.addProject, 'assets')
+  expect(added).toMatchObject({ ok: true, project: { kind: 'assets' } })
+  expect(provision).toHaveBeenCalledWith(path, 'added-planning', 'assets')
+  expect(existsSync(join(path, '.claude/skills/yal-game-planning/SKILL.md'))).toBe(false)
   expect(existsSync(join(path, '.claude/skills/yal-mobile-web-game/SKILL.md'))).toBe(false)
   expect(call(IPC.startTerminal, 'legacy', 80, 24).ok).toBe(true)
   expect(state.spawn.mock.calls.at(-1)?.[2]).toMatchObject({ env: {
@@ -128,22 +128,21 @@ it('creates/adds planning projects with their own terminal environment and syncs
 })
 it('creates, unlinks and cleans planning references when the planning project is removed', () => {
   const dev = call(IPC.createProject, 'linked-dev').project
-  const planning = call(IPC.createProject, 'linked-plan', 'planning').project
+  const planning = call(IPC.createProject, 'linked-plan', 'assets').project
   const file = join(dev.path, '.claude/yal-planning-link.md')
-  expect(call(IPC.setLinkedPlanning, dev.id, planning.id).find((p: { id: string }) => p.id === dev.id).linkedPlanningId).toBe(planning.id)
-  expect(readFileSync(file, 'utf8')).toContain(planning.path)
-  expect(readFileSync(file, 'utf8')).toContain('\uC77D\uAE30 \uC804\uC6A9 \uB370\uC774\uD130, \uADDC\uCE59 \uC544\uB2D8')
-  call(IPC.setLinkedPlanning, dev.id, null)
+  expect(call(IPC.setLinkedAssets, dev.id, planning.id).find((p: { id: string }) => p.id === dev.id).linkedAssetsId).toBe(planning.id)
   expect(existsSync(file)).toBe(false)
-  call(IPC.setLinkedPlanning, dev.id, planning.id)
+  call(IPC.setLinkedAssets, dev.id, null)
+  expect(existsSync(file)).toBe(false)
+  call(IPC.setLinkedAssets, dev.id, planning.id)
   call(IPC.removeProject, planning.id)
   expect(existsSync(file)).toBe(false)
-  expect(call(IPC.listProjects).find((p: { id: string }) => p.id === dev.id).linkedPlanningId).toBeUndefined()
-  expect(() => call(IPC.setLinkedPlanning, dev.id, dev.id)).toThrow()
+  expect(call(IPC.listProjects).find((p: { id: string }) => p.id === dev.id).linkedAssetsId).toBeUndefined()
+  expect(() => call(IPC.setLinkedAssets, dev.id, dev.id)).toThrow()
 })
 it('adds only an existing linked planning folder to development terminal args', () => {
   const dev = call(IPC.createProject, 'permission-dev').project
-  const planning = call(IPC.createProject, 'permission-plan', 'planning').project
+  const planning = call(IPC.createProject, 'permission-plan', 'assets').project
   let previousExit: ((event: { exitCode: number }) => void) | undefined
   const startArgs = (id: string): string[] => {
     previousExit?.({ exitCode: 0 })
@@ -152,21 +151,32 @@ it('adds only an existing linked planning folder to development terminal args', 
     return state.spawn.mock.calls.at(-1)![1]
   }
   expect(startArgs(dev.id)).not.toContain('--add-dir')
-  call(IPC.setLinkedPlanning, dev.id, planning.id)
+  expect((state.spawn.mock.calls.at(-1)![2] as any).env).not.toHaveProperty('YAL_ASSETS_DIR')
+  call(IPC.setLinkedAssets, dev.id, planning.id)
   const args = startArgs(dev.id)
   expect(args.slice(args.indexOf('--add-dir'))).toEqual(['--add-dir', planning.path])
+  expect(args.filter(arg => arg === '--add-dir')).toHaveLength(1)
+  expect((state.spawn.mock.calls.at(-1)![2] as any).env.YAL_ASSETS_DIR).toBe(planning.path)
   expect(startArgs(planning.id)).not.toContain('--add-dir')
+  expect((state.spawn.mock.calls.at(-1)![2] as any).env).not.toHaveProperty('YAL_ASSETS_DIR')
   renameSync(planning.path, planning.path + '-moved')
   try {
     expect(startArgs(dev.id)).not.toContain('--add-dir')
+  expect((state.spawn.mock.calls.at(-1)![2] as any).env).not.toHaveProperty('YAL_ASSETS_DIR')
     writeFileSync(planning.path, 'not a folder')
     expect(startArgs(dev.id)).not.toContain('--add-dir')
+  expect((state.spawn.mock.calls.at(-1)![2] as any).env).not.toHaveProperty('YAL_ASSETS_DIR')
   } finally {
     if (existsSync(planning.path)) rmSync(planning.path)
     renameSync(planning.path + '-moved', planning.path)
   }
-  call(IPC.setLinkedPlanning, dev.id, null)
+  call(IPC.setLinkedAssets, dev.id, planning.id)
+  call(IPC.removeProject, planning.id)
   expect(startArgs(dev.id)).not.toContain('--add-dir')
+  expect((state.spawn.mock.calls.at(-1)![2] as any).env).not.toHaveProperty('YAL_ASSETS_DIR')
+  call(IPC.setLinkedAssets, dev.id, null)
+  expect(startArgs(dev.id)).not.toContain('--add-dir')
+  expect((state.spawn.mock.calls.at(-1)![2] as any).env).not.toHaveProperty('YAL_ASSETS_DIR')
 })
 it('rejects invalid kinds before creating folders or opening the add dialog', async () => {
   for (const kind of ['other', '', null, {}, 1]) {
@@ -204,39 +214,16 @@ it('reads and opens MASTER, propagates open errors, debounces saves and closes o
   vi.useRealTimers()
 })
 
-it('registers planning actions and cleans actual link changes and planning deletion', async () => {
-  for (const channel of ['planning:sync-status', 'planning:apply', 'planning:mark-synced', 'planning:set-baseline']) expect(state.handlers.get(channel)).toBeTypeOf('function')
+it('retires synchronization channels while retaining registry links without document generation', () => {
+  for (const channel of ['assets:sync-status', 'assets:apply', 'assets:mark-synced', 'assets:set-baseline']) expect(state.handlers.has(channel)).toBe(false)
   const dev = call(IPC.createProject, 'sync-dev').project
-  const other = call(IPC.createProject, 'sync-dev-2').project
-  const plan = call(IPC.createProject, 'sync-plan', 'planning').project
-  writeFileSync(join(plan.path, 'plan.md'), 'first')
-  expect(call('planning:sync-status', dev.id)).toEqual({ linked: false })
-  for (const project of [dev, other]) {
-    call(IPC.setLinkedPlanning, project.id, plan.id)
-    expect(call('planning:set-baseline', project.id)).toEqual({ ok: true })
-  }
-  writeFileSync(join(plan.path, 'plan.md'), 'second')
-  expect(await call('planning:apply', dev.id)).toMatchObject({ ok: false, reason: 'terminal-not-running' })
-  const changes = join(dev.path, '.claude/yal-planning-changes.md')
-  expect(existsSync(changes)).toBe(false)
-  expect(call(IPC.startTerminal, dev.id, 80, 24).ok).toBe(true)
-  expect(call('planning:apply', dev.id)).toEqual({ ok: true, count: 1 })
-  call(IPC.setLinkedPlanning, dev.id, plan.id)
-  expect(call('planning:sync-status', dev.id).pending).toBe(true)
-  expect(existsSync(changes)).toBe(true)
-  call(IPC.setLinkedPlanning, dev.id, null)
-  expect(existsSync(changes)).toBe(false)
-  expect(existsSync(join(state.userData, 'planning-sync', dev.id))).toBe(false)
-  call(IPC.setLinkedPlanning, dev.id, plan.id)
-  expect(call('planning:sync-status', dev.id).state).toBe('no-baseline')
-  call('planning:set-baseline', dev.id)
+  const plan = call(IPC.createProject, 'sync-plan', 'assets').project
+  call(IPC.setLinkedAssets, dev.id, plan.id)
+  expect(call(IPC.listProjects).find((p: { id: string }) => p.id === dev.id).linkedAssetsId).toBe(plan.id)
+  for (const name of ['yal-planning-changes.md', 'yal-planning-link.md']) expect(existsSync(join(dev.path, '.claude', name))).toBe(false)
   call(IPC.removeProject, plan.id)
-  for (const project of [dev, other]) {
-    expect(existsSync(join(state.userData, 'planning-sync', project.id))).toBe(false)
-    expect(call('planning:sync-status', project.id)).toEqual({ linked: false })
-  }
+  expect(call(IPC.listProjects).find((p: { id: string }) => p.id === dev.id).linkedAssetsId).toBeUndefined()
   call(IPC.removeProject, dev.id)
-  call(IPC.removeProject, other.id)
 })
 
 it('exposes a fixed isolated editable manage project and validates settings boundaries', () => {
@@ -263,4 +250,6 @@ it('starts the management Claude director with independent sources and no worker
   expect(options.env.YAL_MASTER_PATH).toBe(join(state.userData, 'spaces/manage/master/MASTER.md'))
   expect(options.env.YAL_SKILLS_DIR).toBe(join(state.userData, 'spaces/manage/skills'))
   expect(options.env.YAL_GPT_WORKER).not.toBe('1')
+  expect(options.env).not.toHaveProperty('YAL_ASSETS_DIR')
+  expect(args).not.toContain('--add-dir')
 })

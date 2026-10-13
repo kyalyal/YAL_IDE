@@ -2,6 +2,7 @@ import type { Skill, SkillLogEntry, SkillMutation, SkillMutationResult } from '.
 export class SkillStore {
   constructor(rootDir: string, fs?: typeof import('node:fs'))
   readonly rootDir: string
+  locked<T>(work: () => T): T
   list(): Skill[]
   get(name: string): Skill | null
   history(name: string): number[]

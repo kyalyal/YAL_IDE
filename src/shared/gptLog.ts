@@ -3,12 +3,17 @@ export const GPT_LOG_IPC = {
 } as const
 
 export interface GptLogSnapshot {
+  lastOutputAt?: number
+  hasRunIds?: boolean
+  legacyIdleMs?: number
   text: string
   revision: number
   updatedAt: number
   provision?: import('./types').ProvisionResult
 }
 export interface GptLogAppend {
+  lastOutputAt?: number
+  hasRunIds?: boolean
   projectId: string
   chunk: string
   revision: number
@@ -22,11 +27,13 @@ export interface GptLogApi {
 }
 export type GptJobState = 'running' | 'success' | 'failed' | 'stalled'
 export interface GptLogJob {
+  runId?: string
   startedAt: string
   endedAt: string | null
   model: string
   order: string
   exitCode: number | null
   state: GptJobState
+  lineTimestamps?: (string | undefined)[]
   lines: string[]
 }

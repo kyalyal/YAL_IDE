@@ -24,7 +24,7 @@ export function SkillsWindow() {
   return <main className="skills-window">
     <header className="skills-header"><h1>{space === 'manage' ? 'YAL_IDE 관리 규칙' : t('skillsTitle')}</h1></header>
     <nav className="skills-navigation skills-space-tabs" aria-label={t('skillSpace')}>
-      {(['planning', 'dev', 'manage'] as const).map(kind => <button type="button" key={kind} aria-pressed={space === kind}
+      {(['assets', 'dev', 'manage'] as const).map(kind => <button type="button" key={kind} aria-pressed={space === kind}
         onClick={() => setSpace(kind)}>{t(kind)}</button>)}
     </nav>
     <section className="skills-master" aria-label={t('masterMd')}>
@@ -131,7 +131,7 @@ function SpaceSkills({ space }: { space: SkillSpace }) {
   const filtered = filterSkillLog(log, skillFilter, actionFilter)
   const names = [...new Set([...skills.map(item => item.name), ...log.map(entry => entry.skill)])].sort()
   return <section className="skills-space-content" aria-label={t(space)}>
-    {space === 'manage' ? <p>관리 스킬은 여기에서 편집할 수 있습니다. 기획/개발 스킬에는 영향을 주지 않습니다.</p> : <div className="skills-readonly" role="note"><span aria-hidden="true">🔒</span> {t('skillsReadonly')}</div>}
+    {space === 'manage' ? <p>{t('managementSkillsIsolationNote')}</p> : <div className="skills-readonly" role="note"><span aria-hidden="true">🔒</span> {t('skillsReadonly')}</div>}
     {space === 'manage' ? <p role="status">독립 관리 저장소 · 스킬 {skills.length}개 · 작업 시작 시 최신 규칙을 읽습니다.</p> : <section className="skills-sync-status">
       <p className={`skills-sync-line ${syncStatus.state}`} role="status">{syncStatusLine(syncStatus, language)}</p>
       {(syncStatus.conflicts.length > 0 || syncStatus.failures.length > 0) && <details>

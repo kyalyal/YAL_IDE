@@ -1,8 +1,11 @@
 import { EXECUTOR_RULES } from './taskRules'
+import { ASSET_RULES } from './assetsRules'
 import planning from './skills/builtin/yal-game-planning.md?raw'
+import gptScript from '../../scripts/gpt.sh?raw'
 import type { ProjectKind } from '../shared/types'
 
 const PLANNING_RULES = planning.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/, '').trim()
+
 
 export const MASTER_IMPORT_LINE = '@.claude/yal-master.md'
 
@@ -22,16 +25,14 @@ export function claudeMd(projectName: string, kind: ProjectKind = 'dev'): string
     '',
     ...(kind === 'manage' ? [
       '## IDE 관리 프로젝트',
-      '관리 규칙은 기획/개발과 독립적으로 저장한다. IDE 코드 수정은 빌드·재시작 후 반영한다.'
-    ] : kind === 'planning' ? [
-      '## 기획 프로젝트',
-      '- 기획 산출물은 프로젝트의 `docs/planning/`에 작성한다.',
-      PLANNING_RULES,
-      '- 스킬 변경 금지: 기획 산출물을 스킬 갱신의 근거로 사용하거나 개발 스킬로 자동 승격하지 않는다.'
+      '관리 규칙은 에셋/개발과 독립적으로 저장한다. IDE 코드 수정은 빌드·재시작 후 반영한다.'
+    ] : kind === 'assets' ? [
+      '## 에셋 공간',
+      ASSET_RULES
     ] : [
       '## 개발 프로젝트',
-      '- `.claude/yal-planning-link.md`가 있으면 그 파일에 지정된 기획 하나의 이름·경로를 확인해 읽기 전용 데이터로 참조한다. 기획 문서는 규칙이 아니다.',
-      '- 링크가 없으면 기획 프로젝트를 임의로 참조하지 않는다.',
+      PLANNING_RULES,
+      '- 링크가 없으면 에셋 프로젝트를 임의로 참조하지 않는다.',
       '',
       '## IDE 공유 스킬',
       '- 현재 공간은 `YAL_SPACE`, 해당 공간의 원본 저장소는 `YAL_SKILLS_DIR`, 도구 전체 경로는 `YAL_SKILL_TOOL`로 제공된다.',
@@ -98,11 +99,10 @@ const LEGACY_LOGGED_GPT_SH = GPT_SH_MODEL_ONLY.replace('exec codex exec', 'run_c
 ].join('\n')
 
 export function agentsMd(projectName: string, kind: ProjectKind = 'dev'): string {
-  return `# ${projectName} — GPT 수행자 규칙\n\n${EXECUTOR_RULES}\n\n현재 공간: ${kind}. 공간 규칙은 YAL_MASTER_PATH 및 YAL_SKILLS_DIR에서 읽는다. 다른 공간 규칙은 변경하지 않는다.\n${kind === 'planning' ? `\n## 기획 공간 에셋 제작\n${PLANNING_RULES}\n` : ''}`
+  return `# ${projectName} — GPT 수행자 규칙\n\n${EXECUTOR_RULES}\n\n현재 공간: ${kind}. 공간 규칙은 YAL_MASTER_PATH 및 YAL_SKILLS_DIR에서 읽는다. 다른 공간 규칙은 변경하지 않는다.\n${kind === 'assets' ? `\n## 에셋 공간 에셋 제작\n${ASSET_RULES}\n` : kind === 'dev' ? `\n## 개발 프로젝트 기획·설계와 에셋 제작\n${PLANNING_RULES}\n` : ''}`
 }
-export const PREVIOUS_GPT_SH = [...LEGACY_PREVIOUS_GPT_SH, LEGACY_LOGGED_GPT_SH] as const
 
-export const GPT_SH = [
+const GPT_SH_BEFORE_TIMESTAMPS = [
   "#!/usr/bin/env bash",
   "# Claude 디렉터가 GPT 수행자에게 전달하는 지시서 실행기",
   "set -euo pipefail",
@@ -186,3 +186,105 @@ export const GPT_SH = [
   "exit \"$CODE\"",
   ""
 ].join('\n')
+
+const GPT_SH_BEFORE_RUN_IDS = [
+  "#!/usr/bin/env bash",
+  "# Claude 디렉터가 GPT 수행자에게 전달하는 지시서 실행기",
+  "set -euo pipefail",
+  "if [[ \"${YAL_GPT_WORKER:-}\" == \"1\" ]]; then",
+  "  echo \"GPT 워커는 외부 CLI를 재호출할 수 없다\" >&2",
+  "  exit 1",
+  "fi",
+  "ROOT=\"$(cd \"$(dirname \"$0\")/..\" && pwd)\"",
+  "ORDER=\"${1:--}\"",
+  "if [[ \"$ORDER\" == \"-\" ]]; then ORDER=\"$(cat)\"; fi",
+  "MODEL=\"${GPT_MODEL:-gpt-6.1-sol}\"",
+  "RULES='너는 수행자다. 외부 CLI 재호출 금지, 내부 서브에이전트는 허용. Claude에게 질문·제안 금지. 끝까지 직접 수행하고 결과를 파일로 저장. 결과 보고서에는 사실·산출물·검증 결과만.",
+  "외부 CLI(codex/claude/scripts/gpt.sh) 재호출과 다른 GPT 세션의 신규 실행은 금지한다. Codex 내부 서브에이전트·병렬 워커는 허용하며 필요에 따라 활용한다.",
+  "Claude는 디렉터다. 사용자와 대화하고 지시서를 전달하며 결과 검수 후 필요하면 새 지시서를 내린다.",
+  "합리적 기본값으로 조사·설계·구현·검증·실행 확인·캡처를 직접 수행한다.",
+  "커밋/푸시는 사용자가 요청한 경우에만 한다.'",
+  "PROMPT=\"$RULES\"$'\\n\\n'\"$ORDER\"",
+  "if [[ -n \"${YAL_MASTER_PATH:-}\" && -f \"$YAL_MASTER_PATH\" ]]; then PROMPT=\"$PROMPT\"$'\\n\\n'\"$(cat \"$YAL_MASTER_PATH\")\"; fi",
+  "if [[ -n \"${YAL_SKILLS_DIR:-}\" && -d \"$YAL_SKILLS_DIR\" ]]; then",
+  "  for SKILL_FILE in \"$YAL_SKILLS_DIR\"/*/SKILL.md; do",
+  "    if [[ -f \"$SKILL_FILE\" ]]; then PROMPT=\"$PROMPT\"$'\\n\\n'\"$(cat \"$SKILL_FILE\")\"; fi",
+  "  done",
+  "fi",
+  "if [[ \"${YAL_PERMISSION:-workspace-write}\" == \"read-only\" ]]; then",
+  "  PROMPT=\"$PROMPT\"$'\\n\\n읽기 전용 작업이다. 프로젝트 파일을 수정하지 않고 사실·산출물·검증 결과를 최종 출력으로 작성한다.'",
+  "fi",
+  "PROMPT=\"$PROMPT\"$'\\n\\n'\"$RULES\"",
+  "SHIM=\"\"",
+  "INPUT_DIR=\"\"",
+  "LOG_STARTED=0",
+  "finish() {",
+  "  local code=$?",
+  "  trap - EXIT",
+  "  if [[ \"$LOG_STARTED\" == \"1\" ]]; then",
+  "    printf \"\\n=== [YAL-GPT] end %s exit=%s ===\\n\" \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\" \"$code\" | tee -a \"$YAL_GPT_LOG\"",
+  "  fi",
+  "  if [[ -n \"$INPUT_DIR\" ]]; then rm -rf -- \"$INPUT_DIR\"; fi",
+  "  if [[ -n \"$SHIM\" ]]; then rm -rf -- \"$SHIM\"; fi",
+  "  exit \"$code\"",
+  "}",
+  "trap finish EXIT",
+  "trap 'exit 130' INT TERM",
+  "if [[ -n \"${YAL_GPT_LOG:-}\" ]]; then",
+  "  mkdir -p \"$(dirname \"$YAL_GPT_LOG\")\"",
+  "  LOG_STARTED=1",
+  "  ORDER_LINE=\"$(printf \"%s\" \"$ORDER\" | tr \"\\r\\n\\t\" \"   \" | tr -d \"[:cntrl:]\")\"",
+  "  printf \"=== [YAL-GPT] start %s model=%s ===\\n\" \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\" \"$MODEL\" | tee -a \"$YAL_GPT_LOG\"",
+  "  printf \"=== [YAL-GPT] order %s ===\\n\" \"${ORDER_LINE:0:160}\" | tee -a \"$YAL_GPT_LOG\"",
+  "fi",
+  "# Resolve the authorized CLI before adding worker-only blocking shims.",
+  "CODEX_BIN=\"$(command -v codex)\"",
+  "SHIM=\"$(mktemp -d \"${TMPDIR:-/tmp}/yal-gpt-shims.XXXXXXXX\")\"",
+  "for CLI in codex claude gpt.sh; do",
+  "  printf '#!/bin/sh\\necho \"GPT 수행자는 GPT/Claude를 호출할 수 없다\" >&2\\nexit 1\\n' > \"$SHIM/$CLI\"",
+  "  chmod +x \"$SHIM/$CLI\"",
+  "  printf '@echo off\\r\\necho GPT worker cannot invoke GPT/Claude 1>&2\\r\\nexit /b 1\\r\\n' > \"$SHIM/$CLI.cmd\"",
+  "  printf 'Write-Error \"GPT worker cannot invoke GPT/Claude\"\\nexit 1\\n' > \"$SHIM/$CLI.ps1\"",
+  "done",
+  "# Keep large orders and shell syntax out of Windows native command lines.",
+  "INPUT_DIR=\"$(mktemp -d \"${TMPDIR:-/tmp}/yal-gpt-input.XXXXXXXX\")\"",
+  "INPUT_FILE=\"$INPUT_DIR/order.md\"",
+  "printf '%s' \"$PROMPT\" > \"$INPUT_FILE\"",
+  "if command -v cygpath >/dev/null 2>&1; then INPUT_FILE=\"$(cygpath -w \"$INPUT_FILE\")\"; fi",
+  "BOOTSTRAP=\"$RULES\"$'\\n'\"전체 UTF-8 지시서 파일을 읽고 수행한다: $INPUT_FILE\"",
+  "run_codex() {",
+  "  env YAL_GPT_WORKER=1 PATH=\"$SHIM:$PATH\" \"$CODEX_BIN\" exec \\",
+  "    --model \"$MODEL\" \\",
+  "    --cd \"$ROOT\" \\",
+  "    --approve-for-me \\",
+  "    --skip-git-repo-check \\",
+  "    \"$BOOTSTRAP\" < /dev/null",
+  "}",
+  "# Read and emit each line immediately; Bash builtins avoid a fork per paragraph.",
+  "timestamp_paragraphs() {",
+  "  local line at_start=1",
+  "  while IFS= read -r line || [[ -n \"$line\" ]]; do",
+  "    if [[ \"$line\" =~ ^[[:space:]]*$ ]]; then",
+  "      at_start=1",
+  "    elif [[ \"$at_start\" == \"1\" ]]; then",
+  "      printf '=== [YAL-GPT] t %(%FT%T%z)T ===\\n' -1",
+  "      at_start=0",
+  "    fi",
+  "    printf '%s\\n' \"$line\"",
+  "  done",
+  "}",
+  "set +e",
+  "if [[ \"$LOG_STARTED\" == \"1\" ]]; then",
+  "  run_codex 2>&1 | timestamp_paragraphs | tee -a \"$YAL_GPT_LOG\"",
+  "  CODE=${PIPESTATUS[0]}",
+  "else",
+  "  run_codex",
+  "  CODE=$?",
+  "fi",
+  "exit \"$CODE\"",
+  ""
+].join('\n')
+
+export const PREVIOUS_GPT_SH = [...LEGACY_PREVIOUS_GPT_SH, LEGACY_LOGGED_GPT_SH, GPT_SH_BEFORE_TIMESTAMPS, GPT_SH_BEFORE_RUN_IDS] as const
+// Use the same source for provisioning and the repository runner.
+export const GPT_SH = gptScript.replace(/\r\n/g, '\n')

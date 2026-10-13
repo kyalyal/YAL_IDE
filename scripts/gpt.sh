@@ -25,6 +25,10 @@ if [[ "${YAL_PERMISSION:-workspace-write}" == "read-only" ]]; then
   PROMPT="$PROMPT"$'\n\n읽기 전용 작업이다. 프로젝트 파일을 수정하지 않고 사실·산출물·검증 결과를 최종 출력으로 작성한다.'
 fi
 PROMPT="$PROMPT"$'\n\n'"$RULES"
+# Clear a potentially inherited export attribute: this identity stays shell-local.
+unset YAL_GPT_RUN_ID
+YAL_GPT_RUN_ID="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
+[[ "$YAL_GPT_RUN_ID" =~ ^[0-9a-f]{32}$ ]] || exit 1
 SHIM=""
 INPUT_DIR=""
 LOG_STARTED=0
@@ -32,7 +36,7 @@ finish() {
   local code=$?
   trap - EXIT
   if [[ "$LOG_STARTED" == "1" ]]; then
-    printf "\n=== [YAL-GPT] end %s exit=%s ===\n" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$code" | tee -a "$YAL_GPT_LOG"
+    printf "\n=== [YAL-GPT] end %s exit=%s run=%s ===\n" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$code" "$YAL_GPT_RUN_ID" | tee -a "$YAL_GPT_LOG"
   fi
   if [[ -n "$INPUT_DIR" ]]; then rm -rf -- "$INPUT_DIR"; fi
   if [[ -n "$SHIM" ]]; then rm -rf -- "$SHIM"; fi
@@ -44,8 +48,8 @@ if [[ -n "${YAL_GPT_LOG:-}" ]]; then
   mkdir -p "$(dirname "$YAL_GPT_LOG")"
   LOG_STARTED=1
   ORDER_LINE="$(printf "%s" "$ORDER" | tr "\r\n\t" "   " | tr -d "[:cntrl:]")"
-  printf "=== [YAL-GPT] start %s model=%s ===\n" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$MODEL" | tee -a "$YAL_GPT_LOG"
-  printf "=== [YAL-GPT] order %s ===\n" "${ORDER_LINE:0:160}" | tee -a "$YAL_GPT_LOG"
+  printf "=== [YAL-GPT] start %s model=%s run=%s ===\n" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$MODEL" "$YAL_GPT_RUN_ID" | tee -a "$YAL_GPT_LOG"
+  printf "=== [YAL-GPT] order %s run=%s ===\n" "${ORDER_LINE:0:160}" "$YAL_GPT_RUN_ID" | tee -a "$YAL_GPT_LOG"
 fi
 # Resolve the authorized CLI before adding worker-only blocking shims.
 CODEX_BIN="$(command -v codex)"
@@ -70,9 +74,27 @@ run_codex() {
     --skip-git-repo-check \
     "$BOOTSTRAP" < /dev/null
 }
+# Read and emit each line immediately; Bash builtins avoid a fork per paragraph.
+timestamp_paragraphs() {
+  local line at_start=1
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ "$line" =~ ^[[:space:]]*$ ]]; then
+      at_start=1
+    elif [[ "$at_start" == "1" ]]; then
+      printf '=== [YAL-GPT] t %(%FT%T%z)T ===\n' -1
+      at_start=0
+    fi
+    # Child output is data, even when it echoes a valid control marker or ANSI.
+    if [[ "$line" == *'[YAL-GPT]'* ]]; then
+      printf '> %s\n' "$line"
+    else
+      printf '%s\n' "$line"
+    fi
+  done
+}
 set +e
 if [[ "$LOG_STARTED" == "1" ]]; then
-  run_codex 2>&1 | tee -a "$YAL_GPT_LOG"
+  run_codex 2>&1 | timestamp_paragraphs | tee -a "$YAL_GPT_LOG"
   CODE=${PIPESTATUS[0]}
 else
   run_codex

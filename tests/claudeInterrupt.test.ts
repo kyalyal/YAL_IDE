@@ -162,3 +162,28 @@ it('rejects an old prompt hook even when its process starts after the next promp
   monitor.poll('p'); expect(tracker.get('p')).toBe('working')
   hook('Stop', { prompt_id: 'second' }); expect(tracker.get('p')).toBe('done')
 })
+
+it('keeps GPT-running turns alive through idle_prompt and accepts later tool/Stop signals', () => {
+  const gpt = new GptLogWatcher(dir, nativeGptLogFs, () => {})
+  try {
+    gpt.watch('p')
+    writeFileSync(gpt.path('p'), `=== [YAL-GPT] start ${new Date().toISOString()} model=test ===\n`)
+    gpt.poll()
+    expect(gpt.activity('p').active).toBe(true)
+    const before = readFileSync(join(dir, 'p.json.claude-session'), 'utf8')
+    hook('Notification', { notification_type: 'idle_prompt' })
+    expect(tracker.get('p')).toBe('working')
+    expect(readFileSync(join(dir, 'p.json.claude-session'), 'utf8')).toBe(before)
+    hook('PreToolUse', { tool_use_id: 'gpt' })
+    hook('PostToolUse', { tool_use_id: 'gpt' })
+    expect(tracker.get('p')).toBe('working')
+    hook('Stop'); expect(tracker.get('p')).toBe('done')
+    expect(gpt.activity('p').active).toBe(true)
+    // Actual ESC still cancels the next turn after an idle notification.
+    hook('UserPromptSubmit')
+    hook('Notification', { notification_type: 'idle_prompt' })
+    appendFileSync(transcript, record('[Request interrupted by user]')); monitor.poll('p')
+    expect(tracker.get('p')).toBe('idle')
+    hook('Stop'); expect(tracker.get('p')).toBe('idle')
+  } finally { gpt.dispose() }
+})

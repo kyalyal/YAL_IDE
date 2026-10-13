@@ -7,10 +7,13 @@ import type { SettingsApi } from '../../shared/settings'
 import type { SkillsApi } from '../../shared/skills'
 import type { GptLogApi } from '../../shared/gptLog'
 
+import type { AppReloadApi } from '../../shared/appReload'
+
 declare global {
   interface Window {
+    yalApp: AppReloadApi
     yalGptLog: GptLogApi
-    // Includes kind-aware project creation, planning links and MASTER access.
+    // Includes kind-aware project creation, assets link selection and MASTER access.
     yal: YalApi
     yalViewer: ViewerApi
     yalSettings: SettingsApi

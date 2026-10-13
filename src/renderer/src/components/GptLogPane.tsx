@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { GptLogAppend, GptLogSnapshot } from '../../../shared/gptLog'
 import { parseGptLog, updateGptJobStates } from '../../../shared/gptLogParser'
-import { clampGptHeight, mergeGptSnapshot, visibleGptRows, gptOrphanLines } from '../gptLogState'
+import { clampGptHeight, mergeGptSnapshot, visibleGptRows, gptOrphanLines, gptRowCopyText } from '../gptLogState'
 import { useI18n } from '../i18n/I18nProvider'
 
 export function GptLogPane({ projectId, children }: { projectId: string; children: ReactNode }) {
@@ -78,9 +78,9 @@ function ProjectGptLogPane({ projectId, children }: { projectId: string; childre
     return () => { active = false; unsubscribe() }
   }, [projectId])
 
-  const parsed = useMemo(() => parseGptLog(snapshot.text), [snapshot.text])
-  const jobs = useMemo(() => updateGptJobStates(parsed, now, snapshot.updatedAt || undefined), [parsed, now, snapshot.updatedAt])
-  const latest = jobs.at(-1)
+  const parsed = useMemo(() => parseGptLog(snapshot.text, { hasRunIds: snapshot.hasRunIds }), [snapshot.text, snapshot.hasRunIds])
+  const jobs = useMemo(() => updateGptJobStates(parsed, now, snapshot.lastOutputAt ?? (snapshot.updatedAt || undefined), snapshot.legacyIdleMs), [parsed, now, snapshot.updatedAt, snapshot.lastOutputAt, snapshot.legacyIdleMs])
+  const latest = jobs.find(job => job.state === 'running') ?? jobs.at(-1)
   useEffect(() => {
     if (!parsed.some(job => job.state === 'running')) return
     setNow(Date.now())
@@ -100,8 +100,8 @@ function ProjectGptLogPane({ projectId, children }: { projectId: string; childre
     job.model, duration(job), job.exitCode === null ? '' : t('gptExitCode', { code: job.exitCode })
   ].filter(Boolean).join(' · ')
   // Tail history may begin inside a job; those lines still remain visible/copyable.
-  const orphanLines = useMemo(() => gptOrphanLines(snapshot.text, 5000 - rows.length), [snapshot.text, rows.length])
-  const visibleText = [...orphanLines, ...rows.map(row => row.kind === 'heading' ? heading(row.job) : row.text)].join('\n')
+  const orphanLines = useMemo(() => gptOrphanLines(snapshot.text, 5000 - rows.length, snapshot.hasRunIds), [snapshot.text, rows.length, snapshot.hasRunIds])
+  const visibleText = [...orphanLines, ...rows.map(row => row.kind === 'heading' ? heading(row.job) : gptRowCopyText(row))].join('\n')
 
   useEffect(() => {
     if (autoScroll && !collapsed && body.current) body.current.scrollTop = body.current.scrollHeight
@@ -164,9 +164,9 @@ function ProjectGptLogPane({ projectId, children }: { projectId: string; childre
           {snapshot.provision?.upgraded?.includes('scripts/gpt.sh') && <div className="gpt-log-note">{t('gptUpgraded')}</div>}
           {!visibleText && <div className="gpt-log-empty">{t('gptLogEmpty')}</div>}
           <div role="log" aria-label={t('gptLogTitle')} aria-live="off">
-            {orphanLines.map((line, index) => <div key={`tail-${index}`} className={/error|failed/i.test(line) ? 'gpt-log-line error' : 'gpt-log-line'}>{line || '\u00a0'}</div>)}
+            {orphanLines.map((line, index) => <div key={`tail-${index}`} className={/error|failed/i.test(line) ? 'gpt-log-line error' : 'gpt-log-line'}><span className="gpt-line-time">{/^\[(\d{2}:\d{2}:\d{2})\] /.exec(line)?.[1] ?? '\u00a0'}</span><span>{line.replace(/^\[\d{2}:\d{2}:\d{2}\] /, '') || '\u00a0'}</span></div>)}
             {rows.map((row, index) => <div key={index} className={`${row.kind === 'heading' ? 'gpt-job-heading' : 'gpt-log-line'}${row.error ? ' error' : ''}`}>
-              {row.kind === 'heading' ? heading(row.job) : row.text || '\u00a0'}
+              {row.kind === 'heading' ? heading(row.job) : <><span className="gpt-line-time">{row.timestamp ?? '\u00a0'}</span><span>{row.text || '\u00a0'}</span></>}
             </div>)}
           </div>
         </div>}

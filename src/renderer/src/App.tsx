@@ -1,3 +1,5 @@
+import { ReloadControls } from './components/ReloadControls'
+import { readReloadSession, saveReloadSession } from './reloadSession'
 import { useCallback, useEffect, useRef, useState, type ReactElement } from 'react'
 import type { AddProjectResult, CliStatus, ProjectKind, ProjectActivity, ProjectStatus, ProjectView, ProvisionResult } from '../../shared/types'
 import { EnvBanner, ProvisionBanner, SetupGuide } from './components/Notices'
@@ -11,24 +13,22 @@ import type { AppSettings } from '../../shared/settings'
 import { reduceNotifications, type NotificationMemory } from './sound/notifyRules'
 import { playSound } from './sound/soundEngine'
 import { deriveActivity, activityLabel, elapsedLabel } from './activityState'
-import { planningSyncView, type PlanningAction } from './planningSyncState'
-import { planningIdentity, usePlanningSync } from './usePlanningSync'
 import { useI18n } from './i18n/I18nProvider'
 
 export function App() {
   const { t } = useI18n()
   const [projects, setProjects] = useState<ProjectView[]>([])
-  const [selectedId, setSelectedId] = useState<string | null>(null)
-  const [runningIds, setRunningIds] = useState<string[]>([])
-  const [statuses, setStatuses] = useState<Record<string, ProjectStatus>>({})
+  const [selectedId, setSelectedId] = useState<string | null>(() => readReloadSession('yal.selected', null))
+  const [runningIds, setRunningIds] = useState<string[]>(() => readReloadSession('yal.running', []))
+  const [statuses, setStatuses] = useState<Record<string, ProjectStatus>>(() => readReloadSession('yal.statuses', {}))
   const [env, setEnv] = useState<CliStatus[] | null>(null)
   const [provision, setProvision] = useState<{ name: string; result: ProvisionResult } | null>(null)
   const [message, setMessage] = useState<string | { key: 'settingsOpenError' | 'skillsOpenError' }>('')
   const settingsRef = useRef<AppSettings | null>(null)
-  const [activities, setActivities] = useState<Record<string, ProjectActivity>>({})
-  const activityRef = useRef<Record<string, ProjectActivity>>({})
-  const notifications = useRef<NotificationMemory>({})
-  const [pendingIds, setPendingIds] = useState<string[]>([])
+  const [activities, setActivities] = useState<Record<string, ProjectActivity>>(() => readReloadSession('yal.activities', {}))
+  const activityRef = useRef<Record<string, ProjectActivity>>(activities)
+  const notifications = useRef<NotificationMemory>(readReloadSession('yal.notifications', {}))
+  const [pendingIds, setPendingIds] = useState<string[]>(() => readReloadSession('yal.pending', []))
   const [now, setNow] = useState(Date.now)
   const removedIds = useRef(new Set<string>())
   const acknowledgementRevision = useRef<Record<string, number>>({})
@@ -36,6 +36,7 @@ export function App() {
     const sound = settingsRef.current?.sound
     const result = reduceNotifications(notifications.current, next, time, sound)
     notifications.current = result.memory
+    saveReloadSession('yal.notifications', result.memory)
     setPendingIds(result.pendingIds)
     if (sound) result.playIds.forEach(() => { void playSound(sound.soundId, sound.volume) })
   }, [])
@@ -57,7 +58,16 @@ export function App() {
     void window.yalSettings.openWindow().catch(() => setMessage({ key: 'settingsOpenError' }))
   }, [])
 
-  const [viewerCollapsed, setViewerCollapsed] = useState(false)
+  const [viewerCollapsed, setViewerCollapsed] = useState(() => readReloadSession('yal.viewer.collapsed', false))
+  useEffect(() => {
+    saveReloadSession('yal.selected', selectedId)
+    saveReloadSession('yal.viewer.collapsed', viewerCollapsed)
+    saveReloadSession('yal.running', runningIds)
+    saveReloadSession('yal.activities', activities)
+    saveReloadSession('yal.statuses', statuses)
+    saveReloadSession('yal.pending', pendingIds)
+    saveReloadSession('yal.notifications', notifications.current)
+  }, [selectedId, viewerCollapsed, runningIds, activities, statuses, pendingIds])
   const [viewerWidth, setViewerWidth] = useState(() => {
     let width = window.innerWidth * 0.42
     try {
@@ -133,7 +143,9 @@ export function App() {
         const time = Date.now()
         if (lastSuccess !== null && time - lastSuccess > 1500) suspendGrace()
         const next = Object.fromEntries(Object.entries(received).filter(([id]) => !removedIds.current.has(id)).map(([id, activity]) =>
-          [id, (revisions[id] ?? 0) !== (acknowledgementRevision.current[id] ?? 0) ? activityRef.current[id] ?? activity : activity]))
+          // Only discard a stale done status after acknowledgement. GPT observations stay fresh.
+          [id, activity.status === 'done' && (revisions[id] ?? 0) !== (acknowledgementRevision.current[id] ?? 0)
+            ? { ...activity, status: activityRef.current[id]?.status ?? activity.status } : activity]))
         lastSuccess = time
         activityRef.current = next
         updateNotifications(next, time)
@@ -204,42 +216,12 @@ export function App() {
   }
 
   const selected = projects.find((p) => p.id === selectedId) ?? null
-  const planning = usePlanningSync(projects, selectedId)
-  const planningView = planningSyncView(planning.status, planning.status.linked && !('error' in planning.status) && planning.status.pending)
-  const [planningActionBusy, setPlanningActionBusy] = useState(false)
-  const planningActionGuard = useRef(false)
-  const actionSelection = useRef('')
-  actionSelection.current = selected ? planningIdentity(selected, projects) : ''
-  const mounted = useRef(true)
-  useEffect(() => { mounted.current = true; return () => { mounted.current = false } }, [])
-  async function handlePlanningAction(action: PlanningAction) {
-    if (!selected || planningActionGuard.current) return
-    const id = selected.id, identity = actionSelection.current
-    planningActionGuard.current = true
-    setPlanningActionBusy(true)
-    setMessage('')
-    planning.invalidate(id)
-    try {
-      const result = await (action === 'markSynced' ? window.yal.markPlanningSynced(id)
-        : action === 'setBaseline' ? window.yal.setPlanningBaseline(id) : window.yal.applyPlanningChanges(id))
-      if (!result.ok && mounted.current && actionSelection.current === identity) {
-        setMessage(result.reason === 'busy' ? t('planningBusy') : result.reason === 'terminal-not-running' ? t('planningTerminalOff')
-          : result.reason === 'no-changes' ? t('planningNoChanges') : result.reason === 'file-conflict' ? t('planningFileConflict', { message: result.message ?? '' }) : t('projectActionError'))
-      }
-    } catch {
-      if (mounted.current && actionSelection.current === identity) setMessage(t('projectActionError'))
-    } finally {
-      await planning.refresh(id)
-      planningActionGuard.current = false
-      if (mounted.current) setPlanningActionBusy(false)
-    }
-  }
   const selectedActivity = selected ? deriveActivity(activities[selected.id] ?? { status: statuses[selected.id] ?? 'idle', lastActivityAt: 0, gptRunning: false, gptSince: null }, now) : null
   const viewerVisible = Boolean(selected?.exists && selected.kind !== 'manage' && !viewerCollapsed)
 
   useEffect(() => {
-    if (!viewerVisible) void window.yalViewer.hideViewer().catch(() => {})
-  }, [viewerVisible, selectedId])
+    if (!viewerVisible && (!selectedId || projects.length > 0)) void window.yalViewer.hideViewer().catch(() => {})
+  }, [viewerVisible, selectedId, projects.length])
 
   const claude = env?.find((s) => s.name === 'claude')
   const claudeBlocked = claude !== undefined && !claude.installed
@@ -271,11 +253,10 @@ export function App() {
         activities={activities}
         now={now}
         pendingIds={pendingIds}
-        planningChanges={planning.planningChanges}
         onSelect={handleSelect}
         onAdd={kind => void handleAdd(undefined, kind).catch(() => setMessage(t('projectActionError')))}
         onCreate={handleAdd}
-        onLinkedPlanning={async (id, planningId) => setProjects(await window.yal.setLinkedPlanning(id, planningId))}
+        onLinkedAssets={async (id, assetsId) => setProjects(await window.yal.setLinkedAssets(id, assetsId))}
         onPin={async (p) => setProjects(await window.yal.setProjectPinned(p.id, !p.pinned))}
         onRemove={(p) => void handleRemove(p)}
         onOpenSettings={openSettings}
@@ -311,10 +292,13 @@ export function App() {
         onDoubleClick={() => setSidebarWidth(clampSidebarWidth(260, window.innerWidth))}
       />
       <main className="main">
-        <nav className="main-space-tabs" aria-label="작업 공간">
-          {(['planning', 'dev', 'manage'] as const).map(kind => <button key={kind} aria-pressed={selected?.kind === kind}
+        <div className="main-topbar">
+          <ReloadControls />
+          <nav className="main-space-tabs" aria-label="작업 공간">
+          {(['assets', 'dev', 'manage'] as const).map(kind => <button key={kind} aria-pressed={selected?.kind === kind}
             disabled={!projects.some(project => project.kind === kind)} onClick={() => { const project = projects.find(project => project.kind === kind); if (project) void handleSelect(project.id) }}>{t(kind)}</button>)}
-        </nav>
+          </nav>
+        </div>
         {env && <EnvBanner statuses={env} />}
         {message && <div className="banner warn">{typeof message === 'string' ? message : t(message.key)}</div>}
         {provision && (
@@ -332,11 +316,6 @@ export function App() {
               <span className="activity-elapsed">{elapsedLabel(selectedActivity.elapsedSeconds, t)}</span>
             </span>}
             {selectedId && pendingIds.includes(selectedId) && <span className="activity-deferred">{t('activityDeferred')}</span>}
-            {planningView.badge && <span className="planning-sync-badge">{t(planningView.badge.key, { count: planningView.badge.count ?? 0 })}</span>}
-            {planningView.actions.map(action => <button key={action} className="planning-sync-action" disabled={planningActionBusy}
-              onClick={() => { void handlePlanningAction(action) }}>
-              {t(action === 'apply' ? 'planningApply' : action === 'applyFull' ? 'planningApplyFull' : action === 'markSynced' ? 'planningMarkSynced' : 'planningSetBaseline')}
-            </button>)}
             <button className="viewer-toggle" aria-expanded={!viewerCollapsed}
               onClick={() => setViewerCollapsed((collapsed) => !collapsed)}>
               {t(viewerCollapsed ? 'showViewer' : 'hideViewer')}
@@ -345,7 +324,7 @@ export function App() {
         )}
         {selected?.exists && <div className="director-guidance">
           <span>Claude가 대화하며 지시하고 GPT가 수행합니다</span>
-          {selected.kind === 'manage' && <small className="manage-warning">{selected.selfRepository ? '⚠ IDE 저장소를 수정합니다. ' : ''}코드 수정은 빌드 및 IDE 재시작 후 반영됩니다.</small>}
+          {selected.kind === 'manage' && <small className="manage-warning">{selected.selfRepository ? '⚠ IDE 저장소를 수정합니다. ' : ''}렌더러·프리로드 변경은 빌드 후 새로고침, 메인 변경은 재시작 후 반영됩니다.</small>}
           {selectedId && activities[selectedId]?.stallSuspected && <p role="alert">멈춘 것으로 의심: GPT 출력이 없습니다. 로그와 승인 대기를 확인하세요.</p>}
         </div>}
         {main}

@@ -1,15 +1,15 @@
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { seedMaster, syncMaster, syncPlanningLinks, writeManagedFile, removeManagedFile } from '../src/main/masterDoc'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { seedMaster, syncMaster, removeManagedPlanningFiles, writeManagedFile, removeManagedFile } from '../src/main/masterDoc'
 
 let dir: string
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'yal-master-')) })
 afterEach(() => {
   // Windows read-only files must be writable before recursive cleanup.
-  for (const folder of ['dev', 'dev2', 'planning']) {
-    for (const name of ['yal-master.md', 'yal-planning-link.md']) {
+  for (const folder of ['dev', 'dev2', 'assets']) {
+    for (const name of ['yal-master.md', 'yal-planning-link.md', 'yal-planning-changes.md']) {
       const file = join(dir, folder, '.claude', name)
       try { if (!lstatSync(file).isSymbolicLink()) chmodSync(file, 0o644) } catch { /* absent */ }
     }
@@ -19,7 +19,7 @@ afterEach(() => {
 function project(name: string) {
   const path = join(dir, name)
   mkdirSync(path)
-  return { id: name, name, path, kind: name === 'planning' ? 'planning' as const : 'dev' as const }
+  return { id: name, name, path, kind: name === 'assets' ? 'assets' as const : 'dev' as const }
 }
 
 describe('master documents', () => {
@@ -33,16 +33,15 @@ describe('master documents', () => {
     expect(text).toContain('프로젝트 밖 파일 삭제, force push, 원격 변경, 비밀정보 외부 전송')
     expect(text).toContain('실행 전에 사용자에게 확인한다')
     expect(text).toContain('--approved')
-    expect(text).toContain('.claude/yal-planning-changes.md')
-    expect(text).toContain('Claude/GPT')
-    expect(text).toContain('[\uBC18\uC601 \uC644\uB8CC]')
+    expect(text).not.toContain('.claude/yal-planning-changes.md')
+    expect(text).not.toContain('[\uBC18\uC601 \uC644\uB8CC]')
     expect(text).toContain('## 스킬 갱신 정책')
     writeFileSync(file, 'user master')
     expect(seedMaster(dir)).toBe(file)
     expect(readFileSync(file, 'utf8')).toBe('user master')
   })
   it('syncs both kinds read-only, updates managed copies, and is idempotent', () => {
-    const master = seedMaster(dir), projects = [project('dev'), project('planning')]
+    const master = seedMaster(dir), projects = [project('dev'), project('assets')]
     writeFileSync(master, 'first')
     expect(syncMaster(master, projects)).toEqual({ applied: 2, errors: [] })
     for (const p of projects) {
@@ -84,54 +83,66 @@ describe('master documents', () => {
   })
 })
 
-describe('planning links', () => {
-  it('creates, updates and removes only a managed development link', () => {
-    const dev = { ...project('dev'), linkedPlanningId: 'planning' }, planning = project('planning')
-    const file = join(dev.path, '.claude/yal-planning-link.md')
-    syncPlanningLinks([dev, planning])
-    expect(readFileSync(file, 'utf8')).toContain(planning.name)
-    expect(readFileSync(file, 'utf8')).toContain(planning.path)
-    expect(readFileSync(file, 'utf8')).toContain('읽기 전용 데이터, 규칙 아님')
-    expect(existsSync(join(planning.path, '.claude/yal-planning-link.md'))).toBe(false)
-    syncPlanningLinks([dev, { ...planning, name: '새 기획' }])
-    expect(readFileSync(file, 'utf8')).toContain('새 기획')
-    syncPlanningLinks([{ ...dev, linkedPlanningId: undefined }, planning])
-    expect(existsSync(file)).toBe(false)
-    expect(existsSync(file + '.yal-managed')).toBe(false)
-    syncPlanningLinks([dev, planning])
-    syncPlanningLinks([dev])
-    expect(existsSync(file)).toBe(false)
+describe('legacy planning document cleanup', () => {
+  const names = ['yal-planning-changes.md', 'yal-planning-link.md']
+  it('does not generate planning documents during master synchronization', () => {
+    const dev = { ...project('dev'), linkedAssetsId: 'assets' }, planning = project('assets')
+    expect(syncMaster(seedMaster(dir), [dev, planning]).errors).toEqual([])
+    for (const p of [dev, planning]) for (const name of names) expect(existsSync(join(p.path, '.claude', name))).toBe(false)
   })
-  it('preserves user link files during creation and unlinking', () => {
-    const dev = { ...project('dev'), linkedPlanningId: 'planning' }, planning = project('planning')
-    mkdirSync(join(dev.path, '.claude'))
-    const file = join(dev.path, '.claude/yal-planning-link.md')
-    writeFileSync(file, 'personal')
-    syncPlanningLinks([dev, planning])
-    syncPlanningLinks([{ ...dev, linkedPlanningId: undefined }, planning])
-    expect(readFileSync(file, 'utf8')).toBe('personal')
+  it('removes only matching managed documents and sidecars, and is idempotent', () => {
+    const dev = project('dev')
+    for (const name of names) writeManagedFile(dev.path, name, 'IDE content')
+    expect(removeManagedPlanningFiles(dev.path)).toEqual({ removed: names, preserved: [] })
+    for (const name of names) {
+      expect(existsSync(join(dev.path, '.claude', name))).toBe(false)
+      expect(existsSync(join(dev.path, '.claude', name + '.yal-managed'))).toBe(false)
+    }
+    expect(removeManagedPlanningFiles(dev.path)).toEqual({ removed: [], preserved: [] })
   })
-  it('refuses symbolic directories during link creation', () => {
-    const dev = { ...project('dev'), linkedPlanningId: 'planning' }, planning = project('planning')
-    const outside = join(dir, 'outside')
-    mkdirSync(outside)
-    symlinkSync(outside, join(dev.path, '.claude'), 'junction')
-    syncPlanningLinks([dev, planning])
-    expect(existsSync(join(outside, 'yal-planning-link.md'))).toBe(false)
+  it('preserves modified documents and unmarked user files', () => {
+    const dev = project('dev'), file = join(dev.path, '.claude', names[0])
+    writeManagedFile(dev.path, names[0], 'IDE content')
+    chmodSync(file, 0o644); writeFileSync(file, 'USER edit')
+    writeFileSync(join(dev.path, '.claude', names[1]), 'USER file')
+    expect(removeManagedPlanningFiles(dev.path)).toEqual({ removed: [], preserved: names })
+    expect(readFileSync(file, 'utf8')).toBe('USER edit')
+    expect(existsSync(file + '.yal-managed')).toBe(true)
+    expect(readFileSync(join(dev.path, '.claude', names[1]), 'utf8')).toBe('USER file')
+  })
+  it.each(['name', 'version', 'sha256', 'malformed', 'orphan'])('preserves invalid %s markers', field => {
+    const dev = project('dev'), file = join(dev.path, '.claude', names[0])
+    writeManagedFile(dev.path, names[0], 'IDE content')
+    const sidecar = file + '.yal-managed'
+    if (field === 'orphan') { chmodSync(file, 0o644); rmSync(file) }
+    else if (field === 'malformed') writeFileSync(sidecar, '{')
+    else { const marker = JSON.parse(readFileSync(sidecar, 'utf8')); marker[field] = field === 'version' ? 2 : 'invalid'; writeFileSync(sidecar, JSON.stringify(marker)) }
+    expect(removeManagedPlanningFiles(dev.path)).toEqual({ removed: [], preserved: [names[0]] })
+    expect(existsSync(sidecar)).toBe(true)
+  })
+  it.each(['project', 'directory', 'file', 'marker'])('rejects a symbolic %s without touching its target', type => {
+    const dev = project('dev'), outside = join(dir, 'outside')
+    mkdirSync(outside); writeFileSync(join(outside, 'data'), 'outside')
+    if (type === 'project') { rmSync(dev.path, { recursive: true }); symlinkSync(outside, dev.path, 'junction') }
+    else if (type === 'directory') symlinkSync(outside, join(dev.path, '.claude'), 'junction')
+    else { mkdirSync(join(dev.path, '.claude')); symlinkSync(outside, join(dev.path, '.claude', names[0]) + (type === 'marker' ? '.yal-managed' : ''), 'junction') }
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      expect(() => removeManagedPlanningFiles(dev.path)).not.toThrow()
+      expect(log).toHaveBeenCalled()
+      expect(readFileSync(join(outside, 'data'), 'utf8')).toBe('outside')
+      expect(existsSync(join(outside, names[0]))).toBe(false)
+    } finally { log.mockRestore() }
   })
 })
 
-
 it.each(['yal-master.md', 'yal-planning-link.md'])('preserves an unowned sidecar without its document: %s', name => {
-  const dev = { ...project('dev'), linkedPlanningId: 'planning' }, planning = project('planning')
+  const dev = project('dev')
   mkdirSync(join(dev.path, '.claude'))
   const file = join(dev.path, '.claude', name), sidecar = file + '.yal-managed'
   writeFileSync(sidecar, 'user sidecar')
-  if (name === 'yal-master.md') {
-    const result = syncMaster(seedMaster(dir), [dev])
-    expect(result.applied).toBe(0)
-    expect(result.errors).toHaveLength(1)
-  } else syncPlanningLinks([dev, planning])
+  if (name === 'yal-master.md') expect(syncMaster(seedMaster(dir), [dev]).applied).toBe(0)
+  else removeManagedPlanningFiles(dev.path)
   expect(readFileSync(sidecar, 'utf8')).toBe('user sidecar')
   expect(existsSync(file)).toBe(false)
 })
@@ -158,4 +169,18 @@ it('public wrappers preserve unmanaged collisions and reject unsafe destinations
   expect(() => writeManagedFile(other.path, name, 'unsafe')).toThrow(/symbolic/i)
   expect(() => removeManagedFile(other.path, name)).toThrow(/symbolic/i)
   expect(readFileSync(file, 'utf8')).toBe('USER')
+})
+
+it('keeps a pre-existing user master across new default seeding and project sync', () => {
+  const folder = join(dir, 'master')
+  mkdirSync(folder)
+  const file = join(folder, 'MASTER.md'), custom = ' # 사용자 총괄 규칙\n사용자 원본 유지\n'
+  writeFileSync(file, custom)
+  const dev = project('dev')
+  expect(seedMaster(dir)).toBe(file)
+  expect(syncMaster(file, [dev])).toEqual({ applied: 1, errors: [] })
+  expect(readFileSync(file, 'utf8')).toBe(custom)
+  expect(readFileSync(join(dev.path, '.claude/yal-master.md'), 'utf8')).toBe(custom)
+  expect(seedMaster(dir)).toBe(file)
+  expect(readFileSync(file, 'utf8')).toBe(custom)
 })

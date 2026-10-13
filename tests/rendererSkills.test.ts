@@ -5,7 +5,7 @@ import { act, createElement, mount, click, button, change, deferred } from './re
 import { filterSkillLog, selectSkill, loadSkillLogPage, syncStatusLine } from '../src/renderer/src/skillsState'
 import { MESSAGES, translate } from '../src/shared/i18n'
 import type { SkillLogEntry, SkillSpaceSyncStatus } from '../src/shared/skills'
-const never = (space: 'planning' | 'dev' | 'manage'): SkillSpaceSyncStatus => ({ space, lastSyncAt: null, state: 'never', skills: 0, projects: { total: 0, applied: 0, failed: 0 }, conflicts: [], failures: [] })
+const never = (space: 'assets' | 'dev' | 'manage'): SkillSpaceSyncStatus => ({ space, lastSyncAt: null, state: 'never', skills: 0, projects: { total: 0, applied: 0, failed: 0 }, conflicts: [], failures: [] })
 const skillView = (name: string) => ({ name, description: name, content: `${name} content`, version: 1, createdAt: '', updatedAt: '2026-10-12', author: 'gpt', appliedProjects: 1 })
 beforeEach(() => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
@@ -25,15 +25,15 @@ it('switches all reads to the chosen space and shows the independent read-only m
     expect(ui.host.textContent).toContain('MASTER content')
     await click(button(ui.host, '파일 열기'))
     expect(window.yal.openMaster).toHaveBeenCalledOnce()
-    await click(button(ui.host, '기획'))
-    expect(window.yalSkills.list).toHaveBeenLastCalledWith('planning')
-    expect(window.yalSkills.log).toHaveBeenLastCalledWith('planning', 200, { before: 0, includeCount: true })
-    expect(window.yalSkills.syncStatus).toHaveBeenLastCalledWith('planning')
-    expect(window.yalSkills.history).toHaveBeenLastCalledWith('planning', 'planning-skill')
-    expect(ui.host.textContent).toContain('planning-skill content')
+    await click(button(ui.host, '에셋'))
+    expect(window.yalSkills.list).toHaveBeenLastCalledWith('assets')
+    expect(window.yalSkills.log).toHaveBeenLastCalledWith('assets', 200, { before: 0, includeCount: true })
+    expect(window.yalSkills.syncStatus).toHaveBeenLastCalledWith('assets')
+    expect(window.yalSkills.history).toHaveBeenLastCalledWith('assets', 'assets-skill')
+    expect(ui.host.textContent).toContain('assets-skill content')
     expect(ui.host.textContent).not.toContain('dev-skill')
     await click(button(ui.host, '버전 기록'))
-    expect(window.yalSkills.readVersion).toHaveBeenLastCalledWith('planning', 'planning-skill', 1)
+    expect(window.yalSkills.readVersion).toHaveBeenLastCalledWith('assets', 'assets-skill', 1)
   } finally { await ui.close() }
 })
 it('ignores late list and sync status responses from the previous space', async () => {
@@ -43,7 +43,7 @@ it('ignores late list and sync status responses from the previous space', async 
   vi.mocked(window.yalSkills.syncStatus).mockImplementation(space => space === 'dev' ? oldStatus.promise : Promise.resolve(never(space)))
   const ui = await mount(createElement(SkillsWindow))
   try {
-    await click(button(ui.host, '기획'))
+    await click(button(ui.host, '에셋'))
     await act(async () => { oldList.resolve([skillView('late-dev')]); oldStatus.resolve({ ...never('dev'), state: 'error', lastSyncAt: '2026-10-12', projects: { total: 99, applied: 99, failed: 0 } }) })
     expect(ui.host.textContent).toContain('planning-skill content')
     expect(ui.host.textContent).not.toContain('late-dev')
@@ -56,7 +56,7 @@ it('ignores other-space status events and old history snapshots even after switc
   const ui = await mount(createElement(SkillsWindow))
   try {
     await click(button(ui.host, '버전 기록'))
-    await click(button(ui.host, '기획'))
+    await click(button(ui.host, '에셋'))
     expect(ui.host.textContent).not.toContain('snapshot')
     const listener = vi.mocked(window.yalSkills.onSyncStatus).mock.calls.at(-1)![0]
     await act(async () => listener({ ...never('dev'), lastSyncAt: '2026-10-12', state: 'error', failures: [{ project: 'wrong-space', reason: 'wrong-space' }] }))
@@ -83,7 +83,7 @@ it('ignores a late previous-space log page and resets log filters on tab change'
     await change(ui.host.querySelector('.skills-log-filters select')!, 'dev-skill')
     await click(button(ui.host, '이전 기록 더 보기'))
     expect(window.yalSkills.log).toHaveBeenLastCalledWith('dev', 200, { before: 1, includeCount: true })
-    await click(button(ui.host, '기획'))
+    await click(button(ui.host, '에셋'))
     await click(button(ui.host, '변경 로그'))
     expect(ui.host.querySelector<HTMLSelectElement>('.skills-log-filters select')!.value).toBe('')
     await act(async () => pending.resolve({ entries: [{ ...entry, summary: 'late dev log' }], total: 2 }))
@@ -151,7 +151,7 @@ it('edits independent management master and skills and restores read-only shared
     expect(window.yalSkills.save).toHaveBeenCalledWith('manage', 'manage-skill', 'manage-skill content')
     await click(button(ui.host, '관리 스킬 삭제'))
     expect(window.yalSkills.remove).toHaveBeenCalledWith('manage', 'manage-skill')
-    await click(button(ui.host, '기획'))
+    await click(button(ui.host, '에셋'))
     expect(ui.host.querySelector('[aria-label="관리 마스터 MD 편집"]')).toBeNull()
     expect(ui.host.textContent).toContain('MASTER content')
   } finally { await ui.close() }

@@ -53,7 +53,8 @@ function nextStatus(current, event, payload) {
       return 'working'
     case 'Notification': {
       const p = payload || {}
-      if (p.notification_type === 'idle_prompt') return ['working', 'attention'].includes(current) ? 'idle' : null
+      // Idle reminders are not interruption evidence; GPT tools can still be running.
+      if (p.notification_type === 'idle_prompt') return null
       if (typeof p.message === 'string' && /waiting for your input/i.test(p.message)) return null
       return 'attention'
     }
@@ -161,10 +162,6 @@ function main() {
         // Cancelled tools may finish after ESC. Only a new prompt starts another turn.
         if (session?.interrupted && (!payload.session_id || payload.session_id === session.sessionId) &&
             ['PreToolUse', 'PostToolUse', 'Stop', 'Notification'].includes(event)) return
-        if (event === 'Notification' && payload.notification_type === 'idle_prompt' && session &&
-            ['working', 'attention'].includes(readCurrent(file))) {
-          writeJson(metadata, { ...session, interrupted: true })
-        }
       }
       const next = nextStatus(readCurrent(file), event, payload)
       if (next && !stalePost(file, event, payload)) writeStatus(file, next)

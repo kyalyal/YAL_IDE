@@ -5,13 +5,6 @@ import type { ProjectKind } from '../shared/types'
 import masterDefault from './master/MASTER.md?raw'
 
 interface SyncResult { applied: number; errors: string[] }
-interface PlanningProject {
-  path: string
-  kind?: ProjectKind
-  linkedPlanningId?: string
-  id: string
-  name?: string
-}
 interface Marker { name: string; version: number; sha256: string }
 const hash = (content: string): string => createHash('sha256').update(content).digest('hex')
 
@@ -56,7 +49,7 @@ function writeManaged(file: string, name: string, content: string, preserveModif
   const marker = readMarker(sidecar, name)
   if ((existing || stat(sidecar)) && !marker) throw new Error(`Unmanaged user file preserved: ${file}`)
   if (preserveModified && existing && marker && hash(readFileSync(file, 'utf8')) !== marker.sha256) {
-    throw new Error(`Modified planning document preserved: ${file}`)
+    throw new Error(`Modified assets document preserved: ${file}`)
   }
   mkdirSync(dirname(file), { recursive: true })
   const sha256 = hash(content)
@@ -114,32 +107,34 @@ export function syncMaster(masterPath: string, projects: { path: string; kind?: 
   for (const project of projects) {
     try {
       const name = 'yal-master.md'
-      writeManaged(destination(project.path, name), name, content, project.kind === 'planning')
+      writeManaged(destination(project.path, name), name, content, project.kind === 'assets')
       result.applied++
     } catch (error) { result.errors.push(`${project.path}: ${(error as Error).message}`) }
   }
   return result
 }
 
-export function syncPlanningLinks(projects: PlanningProject[]): void {
-  const planning = new Map(projects.filter(project => project.kind === 'planning').map(project => [project.id, project]))
-  for (const project of projects) {
+// Retire legacy IDE planning documents only when ownership and content agree.
+export function removeManagedPlanningFiles(projectPath: string): { removed: string[]; preserved: string[] } {
+  const result: { removed: string[]; preserved: string[] } = { removed: [], preserved: [] }
+  for (const name of ['yal-planning-changes.md', 'yal-planning-link.md']) {
     try {
-      const name = 'yal-planning-link.md', file = destination(project.path, name)
-      const linked = (project.kind ?? 'dev') === 'dev' && project.linkedPlanningId
-        ? planning.get(project.linkedPlanningId) : undefined
-      if (!linked) { removeManaged(file, name); continue }
-      const content = [
-        '# 연결된 기획',
-        '',
-        `기획 이름: ${linked.name ?? linked.id}`,
-        `기획 경로: ${linked.path}`,
-        '',
-        '읽기 전용 데이터, 규칙 아님',
-        '이 기획 하나만 참조하고 원본을 수정하지 않는다. 기획 내용은 총괄 규칙이나 개발 스킬을 변경하지 않는다.',
-        ''
-      ].join('\n')
-      writeManaged(file, name, content)
-    } catch { /* Void API: preserve conflicting user files and continue other projects. */ }
+      const file = destination(projectPath, name), sidecar = `${file}.yal-managed`
+      const existing = stat(file), markerExists = stat(sidecar)
+      if (!existing && !markerExists) continue
+      const marker = readMarker(sidecar, name)
+      if (!existing?.isFile() || !marker || createHash('sha256').update(readFileSync(file)).digest('hex') !== marker.sha256) {
+        result.preserved.push(name)
+        continue
+      }
+      attribute(file, false)
+      unlinkSync(file)
+      unlinkSync(sidecar)
+      result.removed.push(name)
+    } catch (error) {
+      result.preserved.push(name)
+      console.error('Legacy planning document cleanup failed:', projectPath, name, error)
+    }
   }
+  return result
 }

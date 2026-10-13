@@ -2,10 +2,12 @@ import * as fs from 'node:fs'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import toolSource from '../../tools/yal-skill.cjs?raw'
-import planning from './skills/builtin/yal-game-planning.md?raw'
-import planningV1 from './skills/builtin/yal-game-planning-v1.txt?raw'
 import type { SkillSpace } from './spaces'
 import collaboration from './skills/builtin/yal-collaboration.md?raw'
+import planning from './skills/builtin/yal-game-planning.md?raw'
+import planningV2 from './skills/builtin/yal-game-planning-v2.txt?raw'
+import assetFactory from './skills/builtin/yal-asset-factory.md?raw'
+import assetFactoryV1 from './skills/builtin/yal-asset-factory-v1.txt?raw'
 import mobileGame from './skills/builtin/yal-mobile-web-game.md?raw'
 import { SkillStore } from './skillStore'
 
@@ -13,8 +15,9 @@ export interface BuiltinSkill { name: string; version: number; content: string; 
 export const BUILTIN_SKILLS: Record<SkillSpace, BuiltinSkill[]> = {
   manage: [],
   dev: [{ name: 'yal-mobile-web-game', version: 1, content: mobileGame },
-    { name: 'yal-collaboration', version: 3, content: collaboration }],
-  planning: [{ name: 'yal-game-planning', version: 2, content: planning, previousContent: planningV1 }]
+    { name: 'yal-collaboration', version: 3, content: collaboration },
+    { name: 'yal-game-planning', version: 3, content: planning, previousContent: planningV2 }],
+  assets: [{ name: 'yal-asset-factory', version: 2, content: assetFactory, previousContent: assetFactoryV1 }]
 }
 function atomic(file: string, content: string): void {
   const tmp = `${file}.${randomUUID()}.tmp`
@@ -35,7 +38,7 @@ export function installBuiltins(store: SkillStore, builtins = BUILTIN_SKILLS.dev
     if ((installed[builtin.name] ?? 0) >= builtin.version) continue
     try {
       const current = store.get(builtin.name)
-      // Planning upgrades require the exact shipped predecessor; personal edits win.
+      // Builtin upgrades require the exact shipped predecessor; personal edits win.
       const customized = current && builtin.previousContent !== undefined
         && (current.author !== 'system' || current.content.replace(/\r\n/g, '\n') !== builtin.previousContent.replace(/\r\n/g, '\n'))
       // A pre-existing personal skill with this name is preserved on first install.

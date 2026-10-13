@@ -6,9 +6,9 @@ import { migrateLegacySkills, spaceDir, spaceOf } from '../src/main/spaces'
 let root: string
 afterEach(() => { if (root) rmSync(root, { recursive: true, force: true }) })
 it('maps project kinds to separate canonical skill directories', () => {
-  expect(spaceOf('planning')).toBe('planning')
+  expect(spaceOf('assets')).toBe('assets')
   expect(spaceOf('dev')).toBe('dev')
-  expect(spaceDir('data', 'planning')).toBe(join('data', 'spaces/planning/skills'))
+  expect(spaceDir('data', 'assets')).toBe(join('data', 'spaces/assets/skills'))
   expect(spaceDir('data', 'dev')).toBe(join('data', 'spaces/dev/skills'))
 })
 it('moves legacy skills including metadata and history once', () => {

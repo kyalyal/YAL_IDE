@@ -5,7 +5,7 @@ export interface DerivedActivity { state: ActivityState; elapsedSeconds: number 
 const timestamp = (value: number | null | undefined): value is number =>
   typeof value === 'number' && Number.isFinite(value) && value > 0
 export function deriveActivity(activity: ProjectActivity, now: number): DerivedActivity {
-  const waiting = activity.gptRunning && (activity.status === 'working' || activity.status === 'done')
+  const waiting = activity.gptRunning
   const since = waiting && timestamp(activity.gptSince) ? activity.gptSince : activity.lastActivityAt
   const elapsedSeconds = timestamp(since) && Number.isFinite(now) ? Math.max(0, Math.floor((now - since) / 1000)) : 0
   const state: ActivityState = activity.status === 'attention' ? 'needs-input' : waiting ? 'waiting-gpt' :
