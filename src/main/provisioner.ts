@@ -1,7 +1,12 @@
+import { createHash } from 'node:crypto'
 import { existsSync, lstatSync, appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import type { ProjectKind, ProvisionResult } from '../shared/types'
-import { claudeMd, MASTER_IMPORT_LINE, GPT_SH, PREVIOUS_GPT_SH } from './templates'
+import { agentsMd, claudeMd, MASTER_IMPORT_LINE, GPT_SH, PREVIOUS_GPT_SH } from './templates'
+
+// Exact rejected generated version; customized scripts remain untouched.
+const PRE_CLEANUP_GPT_SH_HASH = "573579481e6217c95896b17c315a2132a1976bd421deee5e49aae536f98cf0c7"
+const REJECTED_GPT_SH_HASH = "3b9c1879c210195ca6f29a7ea3eb91bec169c5fe0e0d4941cd3ae1a53a3c007c"
 
 interface Target {
   rel: string
@@ -18,7 +23,9 @@ export function upgradeGptScript(projectPath: string): ProvisionResult {
     const original = readFileSync(abs, 'utf8')
     const normalized = original.replace(/\r\n/g, '\n')
     if (normalized === GPT_SH) { result.skipped.push(file); return result }
-    if (PREVIOUS_GPT_SH.some(previous => previous === normalized)) {
+    if (PREVIOUS_GPT_SH.some(previous => previous === normalized)
+      || createHash('sha256').update(normalized).digest('hex') === REJECTED_GPT_SH_HASH
+      || createHash('sha256').update(normalized).digest('hex') === PRE_CLEANUP_GPT_SH_HASH) {
       // Re-read immediately before writing; a concurrent customization wins.
       if (readFileSync(abs, 'utf8') === original) {
         writeFileSync(abs, GPT_SH, 'utf8')
@@ -36,6 +43,7 @@ export function provision(projectPath: string, projectName: string, kind: Projec
   const result: ProvisionResult = { created: [], skipped: [], errors: [] }
   const targets: Target[] = [
     { rel: 'CLAUDE.md', content: claudeMd(projectName, kind), mode: 0o644 },
+    { rel: 'AGENTS.md', content: agentsMd(projectName, kind), mode: 0o644 },
     { rel: 'scripts/gpt.sh', content: GPT_SH, mode: 0o755 }
   ]
 

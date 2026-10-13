@@ -191,3 +191,27 @@ describe('yal-hook.cjs as a command', () => {
     expect(state('p1')).toBe('done')
   })
 })
+
+it('clears unfinished Claude status on the authoritative idle notification without completing it', () => {
+  expect(nextStatus('working', 'Notification', { notification_type: 'idle_prompt' })).toBe('idle')
+  expect(nextStatus('attention', 'Notification', { notification_type: 'idle_prompt' })).toBe('idle')
+  expect(nextStatus('done', 'Notification', { notification_type: 'idle_prompt' })).toBeNull()
+})
+
+it('records the exact transcript and prompt boundary for interruption monitoring', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'yal-interrupt-hook-'))
+  try {
+    const transcript = join(dir, 'session.jsonl')
+    writeFileSync(transcript, 'old record\n')
+    execFileSync(process.execPath, [SCRIPT, 'UserPromptSubmit'], {
+      env: { ...process.env, YAL_STATUS_DIR: dir, YAL_PROJECT_ID: 'p' },
+      input: JSON.stringify({ session_id: 'session', transcript_path: transcript })
+    })
+    const meta = JSON.parse(readFileSync(join(dir, 'p.json.claude-session'), 'utf8'))
+    expect(meta.sessionId).toBe('session')
+    expect(meta.transcriptPath).toBe(transcript)
+    expect(meta.offset).toBe(11)
+    expect(meta.interrupted).toBe(false)
+    expect(meta.promptAt).toBeGreaterThan(0)
+  } finally { rmSync(dir, { recursive: true, force: true }) }
+})

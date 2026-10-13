@@ -7,6 +7,8 @@ import { SETTINGS_IPC, type AppSettings, type SettingsApi } from '../shared/sett
 import { EXPORT_IPC, type ExportApi, type ExportRunStatus, type ToolInstallStatus } from '../shared/exporter'
 
 const api: YalApi = {
+  manageInfo: () => ipcRenderer.invoke(IPC.manageInfo),
+  saveMaster: (space, content) => ipcRenderer.invoke(IPC.saveMaster, space, content),
   listProjects: () => ipcRenderer.invoke(IPC.listProjects),
   addProject: (kind = 'dev') => ipcRenderer.invoke(IPC.addProject, kind),
   createProject: (name, kind = 'dev') => ipcRenderer.invoke(IPC.createProject, name, kind),
@@ -19,8 +21,8 @@ const api: YalApi = {
   applyPlanningChanges: devId => ipcRenderer.invoke(IPC.planningApply, devId),
   markPlanningSynced: devId => ipcRenderer.invoke(IPC.planningMarkSynced, devId),
   setPlanningBaseline: devId => ipcRenderer.invoke(IPC.planningSetBaseline, devId),
-  openMaster: () => ipcRenderer.invoke(IPC.openMaster),
-  readMaster: () => ipcRenderer.invoke(IPC.readMaster),
+  openMaster: space => ipcRenderer.invoke(IPC.openMaster, space),
+  readMaster: space => ipcRenderer.invoke(IPC.readMaster, space),
   removeProject: (id) => ipcRenderer.invoke(IPC.removeProject, id),
   checkEnv: () => ipcRenderer.invoke(IPC.checkEnv),
   runningTerminals: () => ipcRenderer.invoke(IPC.runningTerminals),
@@ -58,6 +60,8 @@ const gptLogApi: GptLogApi = {
 contextBridge.exposeInMainWorld('yalGptLog', gptLogApi)
 
 const skillsApi: SkillsApi = {
+  save: (space, name, content) => ipcRenderer.invoke(SKILLS_IPC.save, space, name, content),
+  remove: (space, name) => ipcRenderer.invoke(SKILLS_IPC.remove, space, name),
   list: space => ipcRenderer.invoke(SKILLS_IPC.list, space),
   get: (space, name) => ipcRenderer.invoke(SKILLS_IPC.get, space, name),
   history: (space, name) => ipcRenderer.invoke(SKILLS_IPC.history, space, name),

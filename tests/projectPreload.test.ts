@@ -40,9 +40,9 @@ it('forwards project kinds, planning links and master methods using IPC constant
   await api.setLinkedPlanning('dev', null)
   expect(mocks.invoke).toHaveBeenLastCalledWith(IPC.setLinkedPlanning, 'dev', null)
   await api.openMaster()
-  expect(mocks.invoke).toHaveBeenLastCalledWith(IPC.openMaster)
+  expect(mocks.invoke).toHaveBeenLastCalledWith(IPC.openMaster, undefined)
   await api.readMaster()
-  expect(mocks.invoke).toHaveBeenLastCalledWith(IPC.readMaster)
+  expect(mocks.invoke).toHaveBeenLastCalledWith(IPC.readMaster, undefined)
 })
 
 it('forwards four planning actions with only devId through the exact channels', async () => {

@@ -199,3 +199,12 @@ describe('TerminalManager', () => {
     expect(mgr.runningIds()).toEqual([])
   })
 })
+
+it('forgets exited sessions without asking the PTY library to kill them again', () => {
+  const { mgr, spawned } = setup()
+  mgr.start('ended', '/work/a')
+  spawned[0].pty.exitCb({ exitCode: 0 })
+  mgr.killAll()
+  expect(spawned[0].pty.killed).toBe(false)
+  expect(mgr.runningIds()).toEqual([])
+})

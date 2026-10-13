@@ -14,7 +14,7 @@ afterEach(() => rmSync(dir, { recursive: true, force: true }))
 describe('provision', () => {
   it('creates CLAUDE.md and scripts/gpt.sh in an empty project', () => {
     const r = provision(dir, 'MyGame')
-    expect(r.created.sort()).toEqual(['CLAUDE.md', 'scripts/gpt.sh'])
+    expect(r.created.sort()).toEqual(['AGENTS.md', 'CLAUDE.md', 'scripts/gpt.sh'])
     expect(r.skipped).toEqual([])
     expect(r.errors).toEqual([])
     expect(readFileSync(join(dir, 'CLAUDE.md'), 'utf8')).toContain('MyGame')
@@ -23,7 +23,8 @@ describe('provision', () => {
   })
 
   it('gpt.sh delegates to codex with --approve-for-me and the project root', () => {
-    expect(GPT_SH).toContain('codex exec')
+    expect(GPT_SH).toContain('CODEX_BIN')
+    expect(GPT_SH).toContain('exec \\')
     expect(GPT_SH).toContain('--approve-for-me')
     expect(GPT_SH.startsWith('#!/usr/bin/env bash\n')).toBe(true)
   })
@@ -32,7 +33,7 @@ describe('provision', () => {
     writeFileSync(join(dir, 'CLAUDE.md'), 'MY OWN RULES')
     const r = provision(dir, 'MyGame')
     expect(r.upgraded).toEqual(['CLAUDE.md'])
-    expect(r.created).toEqual(['scripts/gpt.sh'])
+    expect(r.created).toEqual(['AGENTS.md', 'scripts/gpt.sh'])
     expect(readFileSync(join(dir, 'CLAUDE.md'), 'utf8')).toBe('MY OWN RULES\n@.claude/yal-master.md\n')
   })
 
@@ -40,13 +41,13 @@ describe('provision', () => {
     provision(dir, 'MyGame')
     const r = provision(dir, 'MyGame')
     expect(r.created).toEqual([])
-    expect(r.skipped.sort()).toEqual(['CLAUDE.md', 'scripts/gpt.sh'])
+    expect(r.skipped.sort()).toEqual(['AGENTS.md', 'CLAUDE.md', 'scripts/gpt.sh'])
   })
 
   it('reports an error instead of throwing when scripts is a file, and still creates CLAUDE.md', () => {
     writeFileSync(join(dir, 'scripts'), 'i am a file')
     const r = provision(dir, 'MyGame')
-    expect(r.created).toEqual(['CLAUDE.md'])
+    expect(r.created).toEqual(['CLAUDE.md', 'AGENTS.md'])
     expect(r.errors).toHaveLength(1)
     expect(r.errors[0].file).toBe('scripts/gpt.sh')
     expect(readFileSync(join(dir, 'scripts'), 'utf8')).toBe('i am a file')
@@ -92,4 +93,15 @@ describe('master import and project kinds', () => {
     provision(dir, 'x', 'planning')
     expect(readFileSync(join(dir, 'CLAUDE.md'), 'utf8')).toBe(planning)
   })
+})
+
+it('generates a Claude director and a separate GPT executor without granting executor delegation', () => {
+  provision(dir, 'roles')
+  const director = readFileSync(join(dir, 'CLAUDE.md'), 'utf8')
+  const executor = readFileSync(join(dir, 'AGENTS.md'), 'utf8')
+  expect(director).toContain('Claude는 디렉터다')
+  expect(director).toContain('다시 명령한다')
+  expect(executor).toContain('너는 수행자다')
+  expect(executor).toContain('외부 CLI 재호출 금지, 내부 서브에이전트는 허용')
+  expect(executor).toContain('Claude에게 질문·제안 금지')
 })

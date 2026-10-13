@@ -45,3 +45,5 @@
 .skills-sync-status summary { cursor: pointer; }
 .skills-version-picker { display: flex; align-items: center; gap: 10px; }
 @media (max-width: 780px) { .skills-window { padding: 16px; gap: 12px; }.skills-columns { grid-template-columns: 230px minmax(0, 1fr); }.skills-header { align-items: flex-start; }.skills-header h1 { font-size: 18px; } }
+
+.skills-editor { display: block; width: 100%; min-height: 170px; padding: 12px; background: #181a1e; color: #eee; border: 1px solid #555; font: 13px monospace; resize: vertical; }

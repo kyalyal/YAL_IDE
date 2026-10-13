@@ -12,25 +12,29 @@ export function SkillsWindow() {
   const [masterError, setMasterError] = useState(false)
   useEffect(() => {
     let active = true
-    void window.yal.readMaster().then(text => { if (active) setMaster(text) })
+    setMaster(null); setMasterError(false)
+    void window.yal.readMaster(space).then(text => { if (active) setMaster(text) })
       .catch(() => { if (active) setMasterError(true) })
     return () => { active = false }
-  }, [])
+  }, [space])
   async function openMaster() {
-    try { await window.yal.openMaster(); setMasterError(false); setMaster(await window.yal.readMaster()) }
+    try { await window.yal.openMaster(space); setMasterError(false); setMaster(await window.yal.readMaster(space)) }
     catch { setMasterError(true) }
   }
   return <main className="skills-window">
-    <header className="skills-header"><h1>{t('skillsTitle')}</h1></header>
+    <header className="skills-header"><h1>{space === 'manage' ? 'YAL_IDE 관리 규칙' : t('skillsTitle')}</h1></header>
     <nav className="skills-navigation skills-space-tabs" aria-label={t('skillSpace')}>
-      {(['planning', 'dev'] as const).map(kind => <button type="button" key={kind} aria-pressed={space === kind}
+      {(['planning', 'dev', 'manage'] as const).map(kind => <button type="button" key={kind} aria-pressed={space === kind}
         onClick={() => setSpace(kind)}>{t(kind)}</button>)}
     </nav>
     <section className="skills-master" aria-label={t('masterMd')}>
       <div className="skills-master-header"><h2>{t('masterMd')}</h2>
         <button type="button" onClick={() => void openMaster()}>{t('openFile')}</button></div>
       {masterError && <p className="skills-error" role="alert">{t('masterError')}</p>}
-      <pre className="skills-source" tabIndex={0} aria-label={t('masterMd')}>{master ?? t('settingsLoading')}</pre>
+      {space === 'manage' ? <>
+        <textarea className="skills-editor" aria-label="관리 마스터 MD 편집" value={master ?? ''} onChange={event => setMaster(event.target.value)} />
+        <button disabled={master === null} onClick={() => { if (master !== null) void window.yal.saveMaster('manage', master).then(() => setMasterError(false)).catch(() => setMasterError(true)) }}>관리 MD 저장</button>
+      </> : <pre className="skills-source" tabIndex={0} aria-label={t('masterMd')}>{master ?? t('settingsLoading')}</pre>}
     </section>
     <SpaceSkills key={space} space={space} />
   </main>
@@ -127,8 +131,8 @@ function SpaceSkills({ space }: { space: SkillSpace }) {
   const filtered = filterSkillLog(log, skillFilter, actionFilter)
   const names = [...new Set([...skills.map(item => item.name), ...log.map(entry => entry.skill)])].sort()
   return <section className="skills-space-content" aria-label={t(space)}>
-    <div className="skills-readonly" role="note"><span aria-hidden="true">🔒</span> {t('skillsReadonly')}</div>
-    <section className="skills-sync-status">
+    {space === 'manage' ? <p>관리 스킬은 여기에서 편집할 수 있습니다. 기획/개발 스킬에는 영향을 주지 않습니다.</p> : <div className="skills-readonly" role="note"><span aria-hidden="true">🔒</span> {t('skillsReadonly')}</div>}
+    {space === 'manage' ? <p role="status">독립 관리 저장소 · 스킬 {skills.length}개 · 작업 시작 시 최신 규칙을 읽습니다.</p> : <section className="skills-sync-status">
       <p className={`skills-sync-line ${syncStatus.state}`} role="status">{syncStatusLine(syncStatus, language)}</p>
       {(syncStatus.conflicts.length > 0 || syncStatus.failures.length > 0) && <details>
         <summary>{t('skillsSyncDetails')}</summary>
@@ -138,7 +142,8 @@ function SpaceSkills({ space }: { space: SkillSpace }) {
           <li key={index}><span>{item.project}</span> · {item.reason}</li>)}</ul></>}
       </details>}
       <p className="skills-sync-help">{t('skillsSyncHelp')}</p>
-    </section>
+    </section>}
+    {space === 'manage' && <ManageSkillEditor selected={skill} onSaved={refresh} />}
     {error && <p className="skills-error" role="alert">{t('skillsError')}</p>}
     <nav className="skills-navigation" aria-label={t('skillsTitle')}>
       <button type="button" aria-pressed={view === 'skills'} onClick={() => setView('skills')}>{t('skills')} ({skills.length})</button>
@@ -190,5 +195,30 @@ function SpaceSkills({ space }: { space: SkillSpace }) {
         </>}
       </section>
     </div>}
+  </section>
+}
+
+function ManageSkillEditor({ selected, onSaved }: { selected?: SkillView; onSaved(): Promise<void> }) {
+  const [name, setName] = useState('')
+  const [content, setContent] = useState('')
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
+  useEffect(() => { setName(selected?.name ?? ''); setContent(selected?.content ?? ''); setError('') }, [selected?.name, selected?.version])
+  async function mutate(remove = false) {
+    setBusy(true); setError('')
+    try {
+      if (remove) await window.yalSkills.remove('manage', name)
+      else await window.yalSkills.save('manage', name, content)
+      await onSaved()
+    } catch (error) { setError(error instanceof Error ? error.message : String(error)) }
+    finally { setBusy(false) }
+  }
+  return <section aria-label="관리 스킬 편집">
+    <label>스킬 이름<input aria-label="관리 스킬 이름" value={name} disabled={busy} onChange={event => setName(event.target.value)} /></label>
+    <textarea className="skills-editor" aria-label="관리 스킬 내용" value={content} disabled={busy} placeholder={'---\nname: my-skill\ndescription: 설명\n---\n규칙'} onChange={event => setContent(event.target.value)} />
+    <button disabled={busy || !name || !content} onClick={() => void mutate()}>관리 스킬 저장</button>
+    <button disabled={busy || !selected || name !== selected.name} onClick={() => void mutate(true)}>관리 스킬 삭제</button>
+    <button disabled={busy} onClick={() => { setName(''); setContent('---\nname: new-skill\ndescription: 관리 스킬\n---\n'); setError('') }}>새 관리 스킬</button>
+    {error && <p role="alert">{error}</p>}
   </section>
 }

@@ -1,10 +1,14 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain, shell } from 'electron'
-import { existsSync, statSync, readdirSync, mkdirSync, readFileSync, realpathSync, watch, type FSWatcher } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { ClaudeInterruptMonitor } from './claudeInterruptMonitor'
+import { GptSessionActivity } from './gptSessionActivity'
+import { StallMonitor } from './stallMonitor'
+import { ManageSpace, MANAGE_ID, validateManageStorage } from './manageSpace'
+import { app, BrowserWindow, Notification, clipboard, dialog, ipcMain, shell } from 'electron'
+import { appendFileSync, existsSync, statSync, readdirSync, mkdirSync, readFileSync, realpathSync, watch, type FSWatcher } from 'node:fs'
+import { dirname, join, isAbsolute, resolve } from 'node:path'
 import { homedir } from 'node:os'
 import { IPC, type AddProjectResult, type StartTerminalResult, type ProjectKind } from '../shared/types'
-import { checkCli, defaultRunner } from './cliCheck'
 import { hasClaudeSession } from './claudeSessions'
+import { checkCli, defaultRunner } from './cliCheck'
 import { installHooks } from './hookSetup'
 import { provision, upgradeGptScript } from './provisioner'
 import { GPT_LOG_IPC } from '../shared/gptLog'
@@ -54,6 +58,14 @@ process.on('uncaughtException', (error) => {
   process.exit(1)
 })
 
+// Respect verification profiles before any persistent stores are constructed.
+const userDataArgument = process.argv.find(argument => argument.startsWith('--user-data-dir='))?.slice('--user-data-dir='.length)
+if (userDataArgument) {
+  if (!isAbsolute(userDataArgument)) throw new Error('user-data-dir must be absolute')
+  mkdirSync(userDataArgument, { recursive: true })
+  app.setPath('userData', resolve(userDataArgument))
+}
+
 let win: BrowserWindow | null = null
 
 function createWindow(): void {
@@ -90,6 +102,11 @@ app.whenReady().then(async () => {
   ipcMain.handle(IPC.readClipboardText, () => clipboard.readText())
   const userData = app.getPath('userData')
   const registry = new ProjectRegistry(join(userData, 'projects.json'))
+  const settingsStore = new AppSettingsStore(join(userData, 'app-settings.json'))
+  const management = settingsStore.get().manage
+  const manage = new ManageSpace(userData, app.getAppPath(), management?.projectPath, management?.storagePath)
+  const allProjects = () => [...registry.list(), manage.project()]
+  const getProject = (id: string) => id === MANAGE_ID ? manage.project() : registry.get(id)
   const planningSync = new PlanningSync({ userData })
   const gptLogs = new GptLogWatcher(join(userData, 'gpt-logs'), nativeGptLogFs, event => {
     if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) win.webContents.send(GPT_LOG_IPC.append, event)
@@ -100,7 +117,7 @@ app.whenReady().then(async () => {
     gptLogs.watch(project.id)
   }
   const requireGptProject = (id: string) => {
-    if (typeof id !== 'string' || !registry.get(id)) throw new Error('Project is not registered.')
+    if (typeof id !== 'string' || !getProject(id)) throw new Error('Project is not registered.')
     return id
   }
   ipcMain.handle(GPT_LOG_IPC.readTail, (_event, id: string) => ({
@@ -151,7 +168,7 @@ app.whenReady().then(async () => {
   })
   exportsRunner = exporter
   const exportProject = (id: string) => {
-    const project = registry.get(id)
+    const project = getProject(id)
     if (!project) throw new Error('Project is not registered.')
     return project
   }
@@ -191,8 +208,8 @@ app.whenReady().then(async () => {
     } else shell.showItemInFolder(artifact)
   })
   const viewerSettings = new ViewerSettingsStore(join(userData, 'viewer-settings.json'))
-  const settingsStore = new AppSettingsStore(join(userData, 'app-settings.json'))
-  const skills = startSkillsSystem(userData, () => registry.list(), () => win, () => settingsStore.get().language)
+  gptLogs.watch(MANAGE_ID)
+  const skills = startSkillsSystem(userData, () => registry.list(), () => win, () => settingsStore.get().language, manage.store)
   // startSkillsSystem migrates legacy skills before MASTER is seeded.
   const masterPath = seedMaster(userData)
   for (const project of registry.list()) {
@@ -244,13 +261,18 @@ app.whenReady().then(async () => {
   ipcMain.handle(IPC.setLinkedPlanning, (_event, devId: string, planningId: string | null) => {
     planningHandlers.setLinkedPlanning(devId, planningId)
     resyncProjects()
-    return registry.list()
+    return allProjects()
   })
-  ipcMain.handle(IPC.openMaster, async () => {
-    const error = await shell.openPath(masterPath)
+  ipcMain.handle(IPC.openMaster, async (_event, space?: ProjectKind) => {
+    const error = await shell.openPath(space === 'manage' ? manage.masterPath : masterPath)
     if (error) throw new Error(error)
   })
-  ipcMain.handle(IPC.readMaster, () => readFileSync(masterPath, 'utf8'))
+  ipcMain.handle(IPC.readMaster, (_event, space?: ProjectKind) => space === 'manage' ? manage.readMaster() : readFileSync(masterPath, 'utf8'))
+  ipcMain.handle(IPC.manageInfo, () => ({ projectPath: manage.projectPath, storagePath: dirname(dirname(manage.masterPath)) }))
+  ipcMain.handle(IPC.saveMaster, (_event, space: ProjectKind, content: string) => {
+    if (space !== 'manage') throw new Error('이 편집기는 관리 MD만 변경합니다.')
+    manage.saveMaster(content)
+  })
 
   const projectsRoot = () => settingsStore.get().projectsRoot ?? join(app.getPath('documents'), 'YAL Projects')
   ipcMain.handle(IPC.getProjectsRoot, projectsRoot)
@@ -280,10 +302,15 @@ app.whenReady().then(async () => {
   })
   ipcMain.handle(IPC.setProjectPinned, (_event, id: string, pinned: boolean) => {
     registry.setPinned(id, pinned)
-    return registry.list()
+    return allProjects()
   })
   ipcMain.handle(SETTINGS_IPC.get, () => settingsStore.get())
   ipcMain.handle(SETTINGS_IPC.set, (_event, patch: AppSettingsPatch) => {
+    for (const path of [patch?.manage?.projectPath, patch?.manage?.storagePath]) {
+      if (path !== null && path !== undefined && (typeof path !== 'string' || !isAbsolute(path))) throw new Error('관리 경로는 절대 경로여야 합니다.')
+    }
+    if (patch?.manage?.storagePath) validateManageStorage(userData, patch.manage.storagePath)
+    if (patch?.manage?.projectPath && (!existsSync(patch.manage.projectPath) || !statSync(patch.manage.projectPath).isDirectory())) throw new Error('관리 프로젝트 폴더가 존재하지 않습니다.')
     const settings = settingsStore.update(patch)
     updateSkillsWindowTitle(settings.language)
     for (const window of BrowserWindow.getAllWindows()) {
@@ -306,7 +333,7 @@ app.whenReady().then(async () => {
     watchers.delete(id)
   }
   const syncWatcher = (id: string, status: ServerStatus): void => {
-    const project = registry.get(id)
+    const project = getProject(id)
     if (status.state !== 'running' || !project || !viewerSettings.getSettings(id).autoReload) {
       closeWatcher(id)
     } else if (!watchers.has(id)) {
@@ -316,7 +343,7 @@ app.whenReady().then(async () => {
   const devServers = new DevServerManager({ spawn: spawnCommand, killTree }, {
     onStatus: (id, status) => {
       startErrors.delete(id)
-      const project = registry.get(id)
+      const project = getProject(id)
       const displayStatus = withStoppedCommand(status, () =>
         project ? resolveDevCommand(project.path, viewerSettings.getCommand(id)) : null)
       win?.webContents.send(VIEWER_IPC.evServerStatus, id, displayStatus)
@@ -326,7 +353,7 @@ app.whenReady().then(async () => {
   })
   const serverStatus = (id: string): ServerStatus => {
     const status = startErrors.get(id) ?? devServers.status(id)
-    const project = registry.get(id)
+    const project = getProject(id)
     return withStoppedCommand(status, () =>
       project ? resolveDevCommand(project.path, viewerSettings.getCommand(id)) : null)
   }
@@ -343,7 +370,7 @@ app.whenReady().then(async () => {
   ipcMain.handle(VIEWER_IPC.startServer, (_e, id: string): ServerStatus => {
     const current = devServers.status(id)
     if (current.state === 'running' || current.state === 'starting') return current
-    const project = registry.get(id)
+    const project = getProject(id)
     if (!project) return startError(id, null, '등록되지 않은 프로젝트입니다.')
     const override = viewerSettings.getCommand(id)
     const command = resolveDevCommand(project.path, override)
@@ -375,7 +402,7 @@ app.whenReady().then(async () => {
     return settings
   })
   ipcMain.handle(VIEWER_IPC.showViewer, (_e, id: string, bounds: ViewerBounds) => {
-    if (!registry.get(id)) return
+    if (!getProject(id)) return
     viewers.show(id, bounds, viewerSettings.getSettings(id), serverStatus(id).url)
   })
   ipcMain.handle(VIEWER_IPC.hideViewer, () => viewers.hide())
@@ -387,7 +414,36 @@ app.whenReady().then(async () => {
   const nodeStatus = await checkCli('node', defaultRunner)
   const hooks = installHooks(join(userData, 'hooks'))
   const tracker = new StatusTracker(hooks.statusDir)
+  const stalls = new StallMonitor({
+    state: id => tracker.get(id), set: (id, state) => tracker.set(id, state),
+    marker: (id, text) => { mkdirSync(dirname(gptLogs.path(id)), { recursive: true }); appendFileSync(gptLogs.path(id), '\n' + text, 'utf8') },
+    alarm: (id, text) => { if (Notification.isSupported()) new Notification({ title: getProject(id)?.name ?? 'GPT', body: text }).show() }
+  })
+  const interrupts = new ClaudeInterruptMonitor(hooks.statusDir, (id, turn) => {
+    const handled = tracker.interrupt(id, turn)
+    if (handled) stalls.clear(id)
+    return handled
+  })
+  const sessionActivity = new GptSessionActivity(join(homedir(), '.codex', 'sessions'))
+  const stallTimer = setInterval(() => {
+    gptLogs.poll()
+    for (const { id } of allProjects()) {
+      try {
+        const activity = gptLogs.activity(id)
+        activity.lastOutputAt = Math.max(activity.lastOutputAt, sessionActivity.updatedAt(activity.sessionId, activity.since))
+        stalls.check(id, activity, Date.now(), settingsStore.get().stallMinutes)
+      } catch (error) { console.warn('GPT stall monitor:', id, error) }
+    }
+  }, 5000)
 
+
+  const pendingClaudeClosures = new Set<string>()
+  const closeClaude = (id: string): void => {
+    if (tracker.endClaude(id)) pendingClaudeClosures.delete(id)
+    else pendingClaudeClosures.add(id)
+    stalls.clear(id)
+    interrupts.forget(id)
+  }
   const terminals = new TerminalManager(
     {
       spawn: spawnPty,
@@ -395,7 +451,8 @@ app.whenReady().then(async () => {
       pathExists: existsSync,
       extraArgs: nodeStatus.installed ? ['--settings', hooks.settingsPath] : [],
       argsFor: (id) => {
-        const project = registry.get(id)
+        const project = getProject(id)
+        if (project?.kind === 'manage') return ['--append-system-prompt', 'Claude는 디렉터다. 사용자와 대화하고 GPT에게 지시하고 결과를 검수하며 필요하면 재명령한다. 관리 공간 규칙은 환경변수 YAL_MASTER_PATH의 MD와 YAL_SKILLS_DIR의 SKILL.md들을 읽어 적용한다. 기획/개발 공유 규칙은 사용하거나 수정하지 않는다. GPT 수행자에게 질문·제안·재호출을 요구하지 않는다.']
         if (project?.kind !== 'dev' || !project.linkedPlanningId) return []
         const planning = registry.get(project.linkedPlanningId)
         if (planning?.kind !== 'planning') return []
@@ -406,18 +463,27 @@ app.whenReady().then(async () => {
         }
       },
       envFor: (id) => {
-        const space = registry.list().find(project => project.id === id)?.kind ?? 'dev'
-        return { YAL_PROJECT_ID: id, YAL_STATUS_DIR: hooks.statusDir, YAL_GPT_LOG: gptLogs.path(id), YAL_SKILLS_DIR: skills.stores[space].rootDir, YAL_SPACE: space, YAL_SKILL_TOOL: skills.toolPath }
+        const space = getProject(id)?.kind ?? 'dev'
+        return { YAL_PROJECT_ID: id, YAL_STATUS_DIR: hooks.statusDir, YAL_GPT_LOG: gptLogs.path(id), YAL_SKILLS_DIR: skills.stores[space].rootDir, YAL_SPACE: space, YAL_SKILL_TOOL: skills.toolPath, YAL_PERMISSION: settingsStore.get().permissions?.[id] ?? 'workspace-write', YAL_MASTER_PATH: space === 'manage' ? manage.masterPath : masterPath }
       }
     },
     {
       onData: (id, data) => win?.webContents.send(IPC.terminalData, id, data),
+      onClose: closeClaude,
       onExit: (id, code) => {
-        tracker.reset(id)
         win?.webContents.send(IPC.terminalExit, id, code)
       }
     }
   )
+
+  const interruptTimer = setInterval(() => {
+    for (const { id } of allProjects()) {
+      interrupts.poll(id)
+      // Also reconcile persisted status after a crash, a missed exit, or explicit PTY closure.
+      if (pendingClaudeClosures.has(id) || (!terminals.isRunning(id) && ['working', 'attention'].includes(tracker.get(id)))) closeClaude(id)
+      if (!['working', 'attention'].includes(tracker.get(id))) stalls.clear(id)
+    }
+  }, 1000)
 
   const planningHandlers = createPlanningSyncHandlers({ registry, sync: planningSync, terminals, tracker })
   ipcMain.handle(IPC.planningSyncStatus, (_event, devId: string) => planningHandlers.status(devId))
@@ -425,7 +491,7 @@ app.whenReady().then(async () => {
   ipcMain.handle(IPC.planningMarkSynced, (_event, devId: string) => planningHandlers.markSynced(devId))
   ipcMain.handle(IPC.planningSetBaseline, (_event, devId: string) => planningHandlers.setBaseline(devId))
 
-  ipcMain.handle(IPC.listProjects, () => registry.list())
+  ipcMain.handle(IPC.listProjects, allProjects)
 
   ipcMain.handle(IPC.addProject, async (_event, kind?: ProjectKind): Promise<AddProjectResult> => {
     const projectKind = requireKind(kind)
@@ -457,6 +523,7 @@ app.whenReady().then(async () => {
 
   ipcMain.handle(IPC.removeProject, (_e, id: string) => {
     requireGptProject(id)
+    if (id === MANAGE_ID) throw new Error('관리 프로젝트 연결은 설정에서 변경합니다.')
     const planningCleanup = planningHandlers.projectsForRemoval(id)
     exporter.cancel(id)
     exportSettings.remove(id)
@@ -482,14 +549,14 @@ app.whenReady().then(async () => {
 
   ipcMain.handle(IPC.runningTerminals, () => terminals.runningIds())
 
-  ipcMain.handle(IPC.projectStatuses, () => tracker.statuses(registry.list().map((p) => p.id)))
+  ipcMain.handle(IPC.projectStatuses, () => tracker.statuses(allProjects().map((p) => p.id)))
   ipcMain.handle(IPC.projectActivity, () => {
     gptLogs.poll()
     const now = Date.now()
-    return Object.fromEntries(registry.list().map(({ id }) => {
+    return Object.fromEntries(allProjects().map(({ id }) => {
       const detail = tracker.detail(id)
       return [id, { status: detail.state, lastActivityAt: detail.ts,
-        gptRunning: gptLogs.isGptRunning(id, now), gptSince: gptLogs.gptRunningSince(id) }]
+        gptRunning: gptLogs.isGptRunning(id, now), gptSince: gptLogs.gptRunningSince(id), stallSuspected: stalls.suspected(id) }]
     }))
   })
   ipcMain.handle(IPC.acknowledgeProject, (_e, id: string) => tracker.acknowledge(id))
@@ -497,12 +564,13 @@ app.whenReady().then(async () => {
   ipcMain.handle(
     IPC.startTerminal,
     (_e, id: string, cols: number, rows: number): StartTerminalResult => {
-      const project = registry.get(id)
+      const project = getProject(id)
       if (!project) return { ok: false, reason: '등록되지 않은 프로젝트입니다.' }
       try {
         // 새 세션을 띄울 때는 이전 세션이 남긴 상태를 지운다.
         if (!terminals.isRunning(id)) tracker.reset(id)
         terminals.start(id, project.path, cols, rows)
+        pendingClaudeClosures.delete(id)
         return { ok: true, buffer: terminals.getBuffer(id) }
       } catch (e) {
         if (e instanceof ProjectPathMissingError) return { ok: false, reason: e.message }
@@ -517,6 +585,8 @@ app.whenReady().then(async () => {
   )
 
   app.on('before-quit', () => {
+    clearInterval(stallTimer)
+    clearInterval(interruptTimer)
     planningHandlers.dispose()
     gptLogs.dispose()
     cleanupProcessTrees()

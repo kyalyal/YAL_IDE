@@ -68,7 +68,7 @@ describe('SkillStore', () => {
   it('requires a summary and a controlled author, and does not log absent removal', () => {
     const store = new SkillStore(root)
     expect(() => store.apply({ ...input(), summary: ' ' })).toThrow()
-    expect(() => store.apply({ ...input(), author: 'user' })).toThrow()
+    expect(() => store.apply({ ...input(), author: 'unknown' })).toThrow()
     expect(store.remove({ name: 'test', summary: 'Missing', author: 'gpt' }).changed).toBe(false)
     expect(store.log()).toEqual([])
   })

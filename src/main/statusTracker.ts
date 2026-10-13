@@ -1,5 +1,7 @@
 import { mkdirSync, readFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
+import { withStatusLock } from './statusLock'
+import { atomicWrite } from './atomicWrite'
 import type { ProjectStatus } from '../shared/types'
 
 const VALID: ProjectStatus[] = ['idle', 'working', 'done', 'attention']
@@ -7,6 +9,11 @@ const VALID: ProjectStatus[] = ['idle', 'working', 'done', 'attention']
 export class StatusTracker {
   constructor(private readonly dir: string) {
     mkdirSync(dir, { recursive: true })
+  }
+
+  set(id: string, state: ProjectStatus): void {
+    const file = this.file(id)
+    if (file) atomicWrite(file, JSON.stringify({ state, ts: Date.now() }))
   }
 
   get(id: string): ProjectStatus {
@@ -36,6 +43,34 @@ export class StatusTracker {
 
   statuses(ids: string[]): Record<string, ProjectStatus> {
     return Object.fromEntries(ids.map((id) => [id, this.get(id)]))
+  }
+
+  interrupt(id: string, turn: string): boolean {
+    const file = this.file(id)
+    if (!file) return false
+    let interrupted = false
+    try {
+      withStatusLock(file, () => {
+        const metadata = JSON.parse(readFileSync(`${file}.claude-session`, 'utf8'))
+        if (metadata.turn !== turn || metadata.interrupted) return
+        atomicWrite(`${file}.claude-session`, JSON.stringify({ ...metadata, interrupted: true }))
+        if (['working', 'attention'].includes(this.get(id))) atomicWrite(file, JSON.stringify({ state: 'idle', ts: Date.now() }))
+        interrupted = true
+      })
+    } catch { /* Retry after a missing or temporarily locked metadata file. */ }
+    return interrupted
+  }
+
+  endClaude(id: string): boolean {
+    const file = this.file(id)
+    if (!file) return false
+    return withStatusLock(file, () => {
+      try {
+        const metadata = JSON.parse(readFileSync(`${file}.claude-session`, 'utf8'))
+        atomicWrite(`${file}.claude-session`, JSON.stringify({ ...metadata, interrupted: true }))
+      } catch { /* Sessions without hooks still need their persisted state cleared. */ }
+      this.reset(id)
+    })
   }
 
   reset(id: string): void {

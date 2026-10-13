@@ -51,10 +51,13 @@ function destination(projectPath: string, name: string): string {
   rejectSymbolic(`${file}.yal-managed`)
   return file
 }
-function writeManaged(file: string, name: string, content: string): void {
+function writeManaged(file: string, name: string, content: string, preserveModified = false): void {
   const sidecar = `${file}.yal-managed`, existing = stat(file)
   const marker = readMarker(sidecar, name)
   if ((existing || stat(sidecar)) && !marker) throw new Error(`Unmanaged user file preserved: ${file}`)
+  if (preserveModified && existing && marker && hash(readFileSync(file, 'utf8')) !== marker.sha256) {
+    throw new Error(`Modified planning document preserved: ${file}`)
+  }
   mkdirSync(dirname(file), { recursive: true })
   const sha256 = hash(content)
   if (existing && marker?.sha256 === sha256 && hash(readFileSync(file, 'utf8')) === sha256) {
@@ -97,7 +100,7 @@ export function seedMaster(userData: string): string {
   return file
 }
 
-export function syncMaster(masterPath: string, projects: { path: string }[]): SyncResult {
+export function syncMaster(masterPath: string, projects: { path: string; kind?: ProjectKind }[]): SyncResult {
   const result: SyncResult = { applied: 0, errors: [] }
   let content: string
   try {
@@ -111,7 +114,7 @@ export function syncMaster(masterPath: string, projects: { path: string }[]): Sy
   for (const project of projects) {
     try {
       const name = 'yal-master.md'
-      writeManaged(destination(project.path, name), name, content)
+      writeManaged(destination(project.path, name), name, content, project.kind === 'planning')
       result.applied++
     } catch (error) { result.errors.push(`${project.path}: ${(error as Error).message}`) }
   }

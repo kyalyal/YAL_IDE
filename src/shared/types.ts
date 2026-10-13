@@ -1,4 +1,4 @@
-export type ProjectKind = 'planning' | 'dev'
+export type ProjectKind = 'planning' | 'dev' | 'manage'
 
 export interface ProjectRecord {
   id: string
@@ -12,6 +12,7 @@ export interface ProjectRecord {
 
 export interface ProjectView extends ProjectRecord {
   kind: ProjectKind
+  selfRepository?: boolean
   exists: boolean
 }
 
@@ -37,6 +38,7 @@ export interface ProjectActivity {
   status: ProjectStatus
   lastActivityAt: number
   gptRunning: boolean
+  stallSuspected?: boolean
   gptSince: number | null
 }
 
@@ -55,6 +57,8 @@ export type PlanningSyncActionResult = { ok: true } | PlanningSyncFailure
 export type PlanningApplyResult = { ok: true; count: number } | PlanningSyncFailure
 
 export const IPC = {
+  manageInfo: 'manage:info',
+  saveMaster: 'master:save',
   listProjects: 'projects:list',
   addProject: 'projects:add',
   createProject: 'projects:create',
@@ -97,8 +101,10 @@ export interface YalApi {
   applyPlanningChanges(devId: string): Promise<PlanningApplyResult>
   markPlanningSynced(devId: string): Promise<PlanningSyncActionResult>
   setPlanningBaseline(devId: string): Promise<PlanningSyncActionResult>
-  openMaster(): Promise<void>
-  readMaster(): Promise<string>
+  manageInfo(): Promise<{ projectPath: string; storagePath: string }>
+  saveMaster(space: ProjectKind, content: string): Promise<void>
+  openMaster(space?: ProjectKind): Promise<void>
+  readMaster(space?: ProjectKind): Promise<string>
   removeProject(id: string): Promise<void>
   checkEnv(): Promise<CliStatus[]>
   runningTerminals(): Promise<string[]>

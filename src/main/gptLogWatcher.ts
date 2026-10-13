@@ -13,13 +13,15 @@ export interface GptLogFs {
 interface Cursor {
   offset: number; mtime: number; ino: number | null; revision: number; decoder: StringDecoder
   rotated?: { offset: number; mtime: number; decoder: StringDecoder }
+  lastOutputAt: number
+  sessionId?: string
   markers: { start?: string; order?: string; end?: string }
   markerPending: string
   markerDropping: boolean
   outstanding: (number | null)[]
 }
 const emptyCursor = (): Cursor => ({ offset: 0, mtime: 0, ino: null, revision: 0, decoder: new StringDecoder('utf8'),
-  markers: {}, markerPending: '', markerDropping: false, outstanding: [] })
+  lastOutputAt: 0, markers: {}, markerPending: '', markerDropping: false, outstanding: [] })
 
 export class GptLogWatcher {
   private readonly cursors = new Map<string, Cursor>()
@@ -48,6 +50,7 @@ export class GptLogWatcher {
         this.rememberMarkers(cursor, decoder.write(bytes)); offset += bytes.length
       }
       cursor.rotated.decoder = decoder
+      cursor.lastOutputAt = backup.mtimeMs
     } catch { /* No rotated file yet. */ }
     this.cursors.set(id, cursor)
     if (!this.timer) this.timer = setInterval(() => this.poll(), this.options.intervalMs ?? 500)
@@ -60,11 +63,16 @@ export class GptLogWatcher {
       cursor.rotated && cursor.rotated.offset > 0 ? cursor.rotated.mtime : 0)
     return Number.isFinite(now) && Number.isFinite(mtime) && now - mtime <= 30 * 60_000
   }
+  activity(id: string): { active: boolean; since: number | null; lastOutputAt: number; sessionId?: string } {
+    const cursor = this.cursors.get(id)
+    return { active: Boolean(cursor?.outstanding.length), since: cursor?.outstanding[0] ?? null, lastOutputAt: cursor?.lastOutputAt ?? 0, sessionId: cursor?.sessionId }
+  }
   gptRunningSince(id: string): number | null {
     return this.cursors.get(id)?.outstanding[0] ?? null
   }
   private publish(id: string, cursor: Cursor, chunk: string, reset = false, updatedAt = cursor.mtime): void {
-    if (reset) { cursor.markers = {}; cursor.markerPending = ''; cursor.markerDropping = false; cursor.outstanding = [] }
+    if (reset) { cursor.lastOutputAt = 0; cursor.sessionId = undefined; cursor.markers = {}; cursor.markerPending = ''; cursor.markerDropping = false; cursor.outstanding = [] }
+    if (chunk.split('\n').some(line => line.trim() && !/^=== \[YAL-GPT\] (stall|resumed) /.test(line))) cursor.lastOutputAt = updatedAt
     this.rememberMarkers(cursor, chunk)
     this.emit({ projectId: id, chunk, reset, revision: ++cursor.revision, updatedAt })
   }
@@ -77,7 +85,10 @@ export class GptLogWatcher {
       const line = raw.replace(/\r$/, '')
       const start = /^=== \[YAL-GPT\] start (\S+) model=\S+ ===$/.exec(line)
       const end = /^=== \[YAL-GPT\] end (\S+) exit=-?\d+ ===$/.exec(line)
+      const session = /^session id: ([0-9a-f-]{36})$/i.exec(line)
+      if (session) cursor.sessionId = session[1]
       if (start) {
+        cursor.sessionId = undefined
         const since = Date.parse(start[1])
         cursor.outstanding.push(Number.isFinite(since) ? since : null)
       }

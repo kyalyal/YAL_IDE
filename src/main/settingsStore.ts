@@ -1,5 +1,6 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, renameSync } from 'node:fs'
 import { dirname, isAbsolute } from 'node:path'
+import { atomicWrite } from './atomicWrite'
 import { DEFAULT_APP_SETTINGS, SOUND_CATALOG, type AppSettings, type AppSettingsPatch } from '../shared/settings'
 
 function record(value: unknown): Record<string, unknown> | undefined {
@@ -11,8 +12,14 @@ function normalize(value: unknown): AppSettings {
   const sound = record(record(value)?.sound)
   const defaults = DEFAULT_APP_SETTINGS.sound
   return {
+    stallMinutes: typeof record(value)?.stallMinutes === 'number' && Number.isFinite(record(value)!.stallMinutes) ? Math.min(1440, Math.max(1, record(value)!.stallMinutes as number)) : 10,
     projectsRoot: typeof record(value)?.projectsRoot === 'string' && isAbsolute(record(value)!.projectsRoot as string)
       ? record(value)!.projectsRoot as string : null,
+    manage: {
+      projectPath: typeof record(record(value)?.manage)?.projectPath === 'string' && isAbsolute(record(record(value)?.manage)!.projectPath as string) ? record(record(value)?.manage)!.projectPath as string : null,
+      storagePath: typeof record(record(value)?.manage)?.storagePath === 'string' && isAbsolute(record(record(value)?.manage)!.storagePath as string) ? record(record(value)?.manage)!.storagePath as string : null
+    },
+    permissions: Object.fromEntries(Object.entries(record(record(value)?.permissions) ?? {}).filter(([, mode]) => mode === 'read-only' || mode === 'workspace-write')) as AppSettings['permissions'],
     language: record(value)?.language === 'en' ? 'en' : 'ko',
     sound: {
       enabled: typeof sound?.enabled === 'boolean' ? sound.enabled : defaults.enabled,
@@ -41,7 +48,7 @@ export class AppSettingsStore {
   }
 
   get(): AppSettings {
-    return { projectsRoot: this.settings.projectsRoot, language: this.settings.language, sound: { ...this.settings.sound } }
+    return { stallMinutes: this.settings.stallMinutes, manage: { ...this.settings.manage! }, permissions: { ...this.settings.permissions }, projectsRoot: this.settings.projectsRoot, language: this.settings.language, sound: { ...this.settings.sound } }
   }
 
   update(patch: AppSettingsPatch): AppSettings {
@@ -49,12 +56,12 @@ export class AppSettingsStore {
     const next = normalize({
       ...this.settings,
       ...record(patch),
+      manage: { ...this.settings.manage, ...record(record(patch)?.manage) },
+      permissions: { ...this.settings.permissions, ...record(record(patch)?.permissions) },
       sound: { ...this.settings.sound, ...soundPatch }
     })
     mkdirSync(dirname(this.file), { recursive: true })
-    const tmp = `${this.file}.tmp`
-    writeFileSync(tmp, JSON.stringify(next, null, 2), 'utf8')
-    renameSync(tmp, this.file)
+    atomicWrite(this.file, JSON.stringify(next, null, 2))
     // Failed writes must not publish settings that were never saved.
     this.settings = next
     return this.get()

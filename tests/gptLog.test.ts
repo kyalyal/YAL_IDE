@@ -296,3 +296,25 @@ describe('GPT pane pure logic', () => {
     expect(parseGptLog(completed)[0].state).toBe('failed')
   })
 })
+
+it('excludes monitor markers from GPT activity and retains real output through rotation', () => {
+  vi.useFakeTimers()
+  const f = fixture(64)
+  f.put(start + 'worker output\n'); f.watcher.poll()
+  const activity = f.watcher.activity('p')
+  expect(activity.active).toBe(true)
+  f.put('=== [YAL-GPT] stall 2026-10-12T02:00:00Z === warning\n'); f.watcher.poll()
+  expect(f.watcher.activity('p').lastOutputAt).toBe(activity.lastOutputAt)
+  f.put('=== [YAL-GPT] stall 2026-10-12T02:00:00Z === warning\nworker resumed\n'); f.watcher.poll()
+  expect(f.watcher.activity('p').lastOutputAt).toBeGreaterThan(activity.lastOutputAt)
+  f.watcher.dispose()
+})
+
+it('recovers the exact session identity even when its line arrives in parts', () => {
+  vi.useFakeTimers(); const f = fixture()
+  f.put(start + 'session id: 01a13255-634e'); f.watcher.poll()
+  expect(f.watcher.activity('p').sessionId).toBeUndefined()
+  f.put(start + 'session id: 01a13255-634e-7d10-bab2-dcf82cb67ba0\n'); f.watcher.poll()
+  expect(f.watcher.activity('p').sessionId).toBe('01a13255-634e-7d10-bab2-dcf82cb67ba0')
+  f.watcher.dispose()
+})

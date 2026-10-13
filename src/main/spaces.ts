@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, renameSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import type { ProjectKind } from '../shared/types'
 
-export type SkillSpace = 'planning' | 'dev'
+export type SkillSpace = 'planning' | 'dev' | 'manage'
 export const spaceOf = (kind: ProjectKind): SkillSpace => kind
 export function spaceDir(userData: string, space: SkillSpace): string {
   return join(userData, 'spaces', space, 'skills')

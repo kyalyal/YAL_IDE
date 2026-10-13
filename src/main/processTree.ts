@@ -3,6 +3,12 @@ import type { ChildHandle } from './devServerManager'
 
 const liveChildren = new Map<number, ChildHandle>()
 
+export function trackProcessTree(handle: ChildHandle): void {
+  if (!handle.pid) return
+  liveChildren.set(handle.pid, handle)
+  handle.onExit(() => { if (handle.pid) liveChildren.delete(handle.pid) })
+}
+
 export function spawnCommand(command: string, cwd: string, env?: Record<string, string>): ChildHandle {
   const child = spawn(command, {
     cwd,

@@ -6,7 +6,7 @@ import type { Skill, SkillSyncResult, SkillSyncStatus } from '../shared/skills'
 
 const hash = (text: string): string => createHash('sha256').update(text).digest('hex')
 interface Marker { name: string; version: number; sha256: string }
-interface SyncDeps { fs?: typeof nativeFs; setReadOnly?: (file: string, readonly: boolean) => void }
+interface SyncDeps { fs?: typeof nativeFs; setReadOnly?: (file: string, readonly: boolean) => void; preserveModified?: boolean }
 export class SkillSync {
   private readonly fs: typeof nativeFs
   private readonly setReadOnly: (file: string, readonly: boolean) => void
@@ -14,7 +14,7 @@ export class SkillSync {
   // Across restarts an older conflict may be reported again once it leaves
   // that page. This avoids another watched state file and any full-log scan.
   private conflicts: Set<string> | undefined
-  constructor(private readonly store: SkillStore, deps: SyncDeps = {}) {
+  constructor(private readonly store: SkillStore, private readonly deps: SyncDeps = {}) {
     this.fs = deps.fs ?? nativeFs
     // Node's chmod toggles the Windows read-only attribute via the write bit.
     this.setReadOnly = deps.setReadOnly ?? ((file, readonly) => this.fs.chmodSync(file, readonly ? 0o444 : 0o644))
@@ -87,6 +87,11 @@ export class SkillSync {
             if (exists && !marker) {
               if (skill) conflict(name, skill.version, `Unmanaged skill preserved: ${folder}`)
               continue
+            }
+            const managedFile = join(folder, 'SKILL.md')
+            if (this.deps.preserveModified && marker && this.fs.existsSync(managedFile)
+              && (this.fs.lstatSync(managedFile).isSymbolicLink() || hash(this.fs.readFileSync(managedFile, 'utf8')) !== marker.sha256)) {
+              conflict(name, skill?.version ?? marker.version, `Modified planning skill preserved: ${folder}`); continue
             }
             if (!skill) {
               if (this.fs.existsSync(join(this.store.rootDir, name))) throw new Error('Invalid canonical skill preserved; managed copy was not removed')

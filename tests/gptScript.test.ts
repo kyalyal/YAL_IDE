@@ -7,7 +7,7 @@ import { GPT_SH, PREVIOUS_GPT_SH } from '../src/main/templates'
 import { provision, upgradeGptScript } from '../src/main/provisioner'
 
 describe('safe GPT script upgrades', () => {
-  it.each([0, 1])('upgrades known version %i, including CRLF, and is idempotent', index => {
+  it.each([0, 1, 2])('upgrades known version %i, including CRLF, and is idempotent', index => {
     const dir = mkdtempSync(join(tmpdir(), 'yal-upgrade-'))
     try {
       mkdirSync(join(dir, 'scripts'))
@@ -37,10 +37,10 @@ it.skipIf(bash.status !== 0)('generated gpt.sh tees stdout/stderr, markers, mode
   try {
     mkdirSync(join(dir, 'scripts')); mkdirSync(join(dir, 'bin'))
     writeFileSync(join(dir, 'scripts/gpt.sh'), GPT_SH)
-    writeFileSync(join(dir, 'bin/codex'), '#!/usr/bin/env bash\nprintf "out\\n"\nprintf "error: stderr\\n" >&2\nprintf "%s\\n" "$@"\nif [[ "${@: -1}" == "-" ]]; then cat; fi\nexit "${FAKE_EXIT:-0}"\n', { mode: 0o755 })
+    writeFileSync(join(dir, 'bin/codex'), '#!/usr/bin/env bash\nprintf "out\\n"\nprintf "error: stderr\\n" >&2\nprintf "%s\\n" "$@"\nFILE="${@: -1}"; FILE="${FILE##*: }"; cat "$FILE"\nexit "${FAKE_EXIT:-0}"\n', { mode: 0o755 })
     const run = (log: boolean, code: number, prompt = 'hello\nworld\t\x01!') => spawnSync('bash', ['-c', 'export PATH="$PWD/bin:$PATH"; bash scripts/gpt.sh "$ORDER"'], {
       cwd: dir, encoding: 'utf8', timeout: 10000, input: 'stdin order\n',
-      env: { ...process.env, ORDER: prompt, FAKE_EXIT: String(code), GPT_MODEL: 'custom-model', YAL_GPT_LOG: log ? 'logs/p.log' : '' }
+      env: { ...process.env, YAL_GPT_WORKER: '', ORDER: prompt, FAKE_EXIT: String(code), GPT_MODEL: 'custom-model', YAL_GPT_LOG: log ? 'logs/p.log' : '' }
     })
     const logged = run(true, 7)
     expect(logged.status).toBe(7)
@@ -60,4 +60,91 @@ it.skipIf(bash.status !== 0)('generated gpt.sh tees stdout/stderr, markers, mode
     expect(stdin.stdout).toContain('stdin order\n')
     expect(readFileSync(join(process.cwd(), 'scripts/gpt.sh'), 'utf8').replace(/\r\n/g, '\n')).toBe(GPT_SH)
   } finally { rmSync(dir, { recursive: true, force: true }) }
+}, 30000)
+
+
+it.skipIf(bash.status !== 0)('rejects a worker before reading stdin or resolving another executor', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'yal-worker-guard-'))
+  try {
+    mkdirSync(join(dir, 'scripts')); mkdirSync(join(dir, 'bin')); writeFileSync(join(dir, 'scripts/gpt.sh'), GPT_SH)
+    writeFileSync(join(dir, 'bin/codex'), '#!/bin/sh\necho recursive-invocation\nexit 0\n', { mode: 0o755 })
+    const result = spawnSync('bash', ['-c', 'export PATH="$PWD/bin:$PATH"; bash scripts/gpt.sh -'], { cwd: dir, encoding: 'utf8', timeout: 5000, env: { ...process.env, YAL_GPT_WORKER: '1' } })
+    expect(result.status).toBe(1)
+    expect(result.stderr).toContain('GPT 워커는 외부 CLI를 재호출할 수 없다')
+    expect(result.stdout).toBe('')
+  } finally { rmSync(dir, { recursive: true, force: true }) }
+}, 30000)
+it.skipIf(bash.status !== 0)('passes HEAD approval args, closed stdin, worker env and functioning PATH shims to Codex', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'yal-worker-env-'))
+  try {
+    mkdirSync(join(dir, 'scripts')); mkdirSync(join(dir, 'bin'))
+    writeFileSync(join(dir, 'scripts/gpt.sh'), GPT_SH)
+    writeFileSync(join(dir, 'bin/codex'), `#!/usr/bin/env bash
+printf '%s\\n' "$@"
+echo "worker=$YAL_GPT_WORKER"
+if read -r line; then echo 'stdin-open'; else echo 'stdin-closed'; fi
+for cli in codex claude gpt.sh; do
+  "$cli" >/dev/null 2>&1
+  echo "$cli-status=$?"
+done
+`, { mode: 0o755 })
+    const result = spawnSync('bash', ['-c', 'export PATH="$PWD/bin:$PATH"; bash scripts/gpt.sh "지시서"'], { cwd: dir, encoding: 'utf8', timeout: 10000, input: 'must not reach worker', env: { ...process.env, YAL_GPT_WORKER: '', YAL_GPT_LOG: '', GPT_MODEL: '' } })
+    expect(result.status).toBe(0)
+    expect(result.stdout).toContain('exec\n--model\ngpt-6.1-sol\n--cd\n')
+    expect(result.stdout).toContain('--approve-for-me\n--skip-git-repo-check\n')
+    expect(result.stdout).not.toContain('--sandbox')
+    expect(result.stdout).not.toContain('--ask-for-approval')
+    expect(result.stdout).toContain('worker=1')
+    expect(result.stdout).toContain('stdin-closed')
+    for (const cli of ['codex', 'claude', 'gpt.sh']) expect(result.stdout).toContain(`${cli}-status=1`)
+    expect(result.stdout).toContain('결과 보고서에는 사실·산출물·검증 결과만')
+  } finally { rmSync(dir, { recursive: true, force: true }) }
+}, 30000)
+
+it.skipIf(bash.status !== 0)('closes log markers on CLI startup failure', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'yal-start-failure-'))
+  try {
+    mkdirSync(join(dir, 'scripts')); writeFileSync(join(dir, 'scripts/gpt.sh'), GPT_SH)
+    const result = spawnSync('bash', ['-c', 'export PATH="/usr/bin:/bin"; bash scripts/gpt.sh order'], { cwd: dir, encoding: 'utf8', timeout: 10000, env: { ...process.env, YAL_GPT_WORKER: '', YAL_GPT_LOG: 'logs/failure.log' } })
+    expect(result.status).not.toBe(0)
+    const log = readFileSync(join(dir, 'logs/failure.log'), 'utf8')
+    expect(log).toContain('[YAL-GPT] start')
+    expect(log).toMatch(/end .* exit=1 ===/)
+  } finally { rmSync(dir, { recursive: true, force: true }) }
+}, 30000)
+
+it('upgrades only the exact rejected generated script and preserves a customized derivative', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'yal-rejected-upgrade-'))
+  try {
+    const rejected = readFileSync('tests/fixtures/rejected-gpt-script.txt', 'utf8')
+    mkdirSync(join(dir, 'scripts'))
+    const file = join(dir, 'scripts/gpt.sh')
+    writeFileSync(file, rejected.replace(/\n/g, '\r\n'))
+    expect(upgradeGptScript(dir).upgraded).toEqual(['scripts/gpt.sh'])
+    expect(readFileSync(file, 'utf8')).toBe(GPT_SH)
+    writeFileSync(file, rejected + '\n# user customization\n')
+    expect(upgradeGptScript(dir).skipReasons).toEqual({ 'scripts/gpt.sh': 'customized' })
+    expect(readFileSync(file, 'utf8')).toBe(rejected + '\n# user customization\n')
+  } finally { rmSync(dir, { recursive: true, force: true }) }
 })
+
+it.skipIf(bash.status !== 0)('keeps large UTF-8 orders out of the CLI command line and cleans their file', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'yal-long-order-'))
+  try {
+    mkdirSync(join(dir, 'scripts')); mkdirSync(join(dir, 'bin')); writeFileSync(join(dir, 'scripts/gpt.sh'), GPT_SH)
+    writeFileSync(join(dir, 'bin/codex'), `#!/usr/bin/env bash
+BOOT="\${@: -1}"
+FILE="\${BOOT##*: }"
+printf 'bootstrap-bytes=%s\\n' "\${#BOOT}"
+printf 'order-file=%s\\n' "$FILE"
+cat "$FILE"
+`, { mode: 0o755 })
+    const order = '한글 "quoted" $(literal) %TEMP% ' + '가'.repeat(40000)
+    const result = spawnSync('bash', ['-c', 'export PATH="$PWD/bin:$PATH"; bash scripts/gpt.sh -'], { cwd: dir, encoding: 'utf8', input: order, timeout: 10000, env: { ...process.env, YAL_GPT_WORKER: '', YAL_GPT_LOG: '', YAL_MASTER_PATH: '', YAL_SKILLS_DIR: '', YAL_PERMISSION: 'read-only' } })
+    expect(result.status).toBe(0); expect(result.stdout).toContain(order)
+    expect(result.stdout).toContain('읽기 전용 작업이다')
+    expect(Number(/bootstrap-bytes=(\d+)/.exec(result.stdout)![1])).toBeLessThan(2000)
+    const file = /order-file=([^\n]+)/.exec(result.stdout)![1]
+    expect(() => readFileSync(file)).toThrow()
+  } finally { rmSync(dir, { recursive: true, force: true }) }
+}, 15000)

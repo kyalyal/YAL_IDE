@@ -30,8 +30,8 @@ it('installs the exact standalone tool, syncs on startup and CLI changes, and br
   const project = join(root, 'project'); mkdirSync(project)
   runtime = startSkillsSystem(join(root, 'userData'), () => [{ path: project, kind: 'dev' as const }], () => null, () => 'ko')
   expect(readFileSync(runtime.toolPath, 'utf8')).toBe(readFileSync('tools/yal-skill.cjs', 'utf8'))
-  expect(state.handlers.size).toBe(7)
-  expect([...state.handlers.keys()].sort()).toEqual(['skills:list', 'skills:get', 'skills:history', 'skills:readVersion', 'skills:log', 'skills:syncStatus', 'skills:openWindow'].sort())
+  expect(state.handlers.size).toBe(9)
+  expect([...state.handlers.keys()].sort()).toEqual(['skills:save', 'skills:remove', 'skills:list', 'skills:get', 'skills:history', 'skills:readVersion', 'skills:log', 'skills:syncStatus', 'skills:openWindow'].sort())
   const startupStatus = state.handlers.get(SKILLS_IPC.syncStatus)!({}, 'dev')
   expect(startupStatus).toMatchObject({ state: 'ok', skills: 2, projects: { total: 1, applied: 1, failed: 0 }, conflicts: [], failures: [] })
   for (const send of state.sends) expect(send).toHaveBeenCalledWith(SKILLS_IPC.syncStatus, startupStatus)
@@ -118,8 +118,8 @@ it('installs only the builtins for each space and preserves migrated collaborati
   expect(runtime.stores.dev.list().map(s => s.name).sort()).toEqual(['yal-collaboration', 'yal-mobile-web-game'])
   expect(runtime.stores.planning.list().map(s => s.name)).toEqual(['yal-game-planning'])
   expect(runtime.stores.dev.get('yal-collaboration')?.content).toContain('keep')
-  expect(JSON.parse(readFileSync(join(runtime.stores.dev.rootDir, '.builtins.json'), 'utf8'))).toEqual({ 'yal-mobile-web-game': 1, 'yal-collaboration': 2 })
-  expect(JSON.parse(readFileSync(join(runtime.stores.planning.rootDir, '.builtins.json'), 'utf8'))).toEqual({ 'yal-game-planning': 1 })
+  expect(JSON.parse(readFileSync(join(runtime.stores.dev.rootDir, '.builtins.json'), 'utf8'))).toEqual({ 'yal-mobile-web-game': 1, 'yal-collaboration': 3 })
+  expect(JSON.parse(readFileSync(join(runtime.stores.planning.rootDir, '.builtins.json'), 'utf8'))).toEqual({ 'yal-game-planning': 2 })
 })
 it('isolates canonical writes, watcher syncs, IPC reads and status events in both directions', async () => {
   root = mkdtempSync(join(tmpdir(), 'yal-runtime-'))
@@ -169,7 +169,7 @@ it('ships the planning builtin in Korean within eight lines', () => {
   expect(content).toContain('읽기 전용 참조 데이터')
 })
 
-it('installs collaboration v2 on first launch and upgrades tracked builtin v1 only once', () => {
+it('installs collaboration v3 on first launch and upgrades tracked builtin v1 only once', () => {
   root = mkdtempSync(join(tmpdir(), 'yal-runtime-'))
   const userData = join(root, 'userData')
   const legacy = new SkillStore(join(userData, 'skills'))
@@ -177,8 +177,8 @@ it('installs collaboration v2 on first launch and upgrades tracked builtin v1 on
   writeFileSync(join(legacy.rootDir, '.builtins.json'), JSON.stringify({ 'yal-collaboration': 1 }))
   runtime = startSkillsSystem(userData, () => [], () => null, () => 'ko')
   const builtin = BUILTIN_SKILLS.dev.find(s => s.name === 'yal-collaboration')!
-  expect(builtin).toMatchObject({ version: 2 })
-  expect(builtin.content.trim().split('\n').length).toBeLessThanOrEqual(6)
+  expect(builtin).toMatchObject({ version: 3 })
+  expect(builtin.content).toContain('Codex 내부 서브에이전트·병렬 워커는 허용한다')
   expect(builtin.content).toContain('name: yal-collaboration')
   expect(builtin.content).toContain('description:')
   expect(builtin.content).toContain('\uCD1D\uAD04 \uADDC\uCE59\uC740 `.claude/yal-master.md`(MASTER.md)\uB97C \uB530\uB978\uB2E4.')
@@ -191,5 +191,23 @@ it('installs collaboration v2 on first launch and upgrades tracked builtin v1 on
   runtime.close()
   runtime = startSkillsSystem(join(root, 'fresh'), () => [], () => null, () => 'ko')
   expect(runtime.stores.dev.get('yal-collaboration')?.content).toBe(builtin.content)
-  expect(JSON.parse(readFileSync(join(runtime.stores.dev.rootDir, '.builtins.json'), 'utf8'))['yal-collaboration']).toBe(2)
+  expect(JSON.parse(readFileSync(join(runtime.stores.dev.rootDir, '.builtins.json'), 'utf8'))['yal-collaboration']).toBe(3)
+})
+
+it('allows management edits with history while refusing planning and dev mutations', () => {
+  root = mkdtempSync(join(tmpdir(), 'yal-management-runtime-'))
+  runtime = startSkillsSystem(join(root, 'userData'), () => [], () => null, () => 'ko')
+  const save = state.handlers.get(SKILLS_IPC.save)!, remove = state.handlers.get(SKILLS_IPC.remove)!
+  const first = '---\nname: own\ndescription: 관리 스킬\n---\n첫 규칙'
+  const second = first.replace('첫 규칙', '변경 규칙')
+  expect(save({}, 'manage', 'own', first)).toMatchObject({ changed: true, version: 1 })
+  expect(save({}, 'manage', 'own', second)).toMatchObject({ changed: true, version: 2 })
+  expect(runtime.stores.manage.readVersion('own', 1)).toBe(first)
+  expect(runtime.stores.manage.log()[0]).toMatchObject({ author: 'user', action: 'update' })
+  for (const space of ['dev', 'planning']) {
+    expect(() => save({}, space, 'own', first)).toThrow()
+    expect(() => remove({}, space, 'own')).toThrow()
+    expect(runtime.stores[space as 'dev' | 'planning'].get('own')).toBeNull()
+  }
+  expect(remove({}, 'manage', 'own')).toMatchObject({ action: 'remove' })
 })

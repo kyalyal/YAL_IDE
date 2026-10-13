@@ -436,7 +436,7 @@ class SkillStore {
   }
   validateMutation(summary, author) {
     if (typeof summary !== 'string' || !summary.trim()) throw new Error('A non-empty summary is required')
-    if (!['claude', 'gpt', 'system'].includes(author)) throw new Error('Invalid author')
+    if (!['claude', 'gpt', 'system', 'user'].includes(author)) throw new Error('Invalid author')
   }
   remove({ name, summary, author }) {
     validateName(name); this.validateMutation(summary, author)

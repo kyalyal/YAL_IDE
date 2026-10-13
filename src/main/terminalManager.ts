@@ -29,6 +29,7 @@ export interface TerminalDeps {
 export interface TerminalEvents {
   onData(id: string, data: string): void
   onExit(id: string, exitCode: number): void
+  onClose?(id: string): void
 }
 
 export class ProjectPathMissingError extends Error {
@@ -86,6 +87,7 @@ export class TerminalManager {
       // 교체되거나 kill된 세션의 늦은 종료 이벤트는 무시한다.
       if (this.sessions.get(id) !== session) return
       session.alive = false
+      this.events.onClose?.(id)
       this.events.onExit(id, exitCode)
     })
   }
@@ -116,11 +118,13 @@ export class TerminalManager {
     const s = this.sessions.get(id)
     if (!s) return
     this.sessions.delete(id)
+    if (!s.alive) return
     try {
       s.pty.kill()
     } catch {
       // 이미 종료된 프로세스는 무시한다.
     }
+    this.events.onClose?.(id)
   }
 
   killAll(): void {

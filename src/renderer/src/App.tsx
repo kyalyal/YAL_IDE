@@ -235,7 +235,7 @@ export function App() {
     }
   }
   const selectedActivity = selected ? deriveActivity(activities[selected.id] ?? { status: statuses[selected.id] ?? 'idle', lastActivityAt: 0, gptRunning: false, gptSince: null }, now) : null
-  const viewerVisible = Boolean(selected?.exists && !viewerCollapsed)
+  const viewerVisible = Boolean(selected?.exists && selected.kind !== 'manage' && !viewerCollapsed)
 
   useEffect(() => {
     if (!viewerVisible) void window.yalViewer.hideViewer().catch(() => {})
@@ -255,7 +255,7 @@ export function App() {
         <p>{t('missingFolder')}</p>
       </div>
     )
-  else main = <GptLogPane key={selected.id} projectId={selected.id}>
+  else main = <GptLogPane key={`log-${selected.id}`} projectId={selected.id}>
     <TerminalView key={selected.id} projectId={selected.id} />
   </GptLogPane>
 
@@ -311,6 +311,10 @@ export function App() {
         onDoubleClick={() => setSidebarWidth(clampSidebarWidth(260, window.innerWidth))}
       />
       <main className="main">
+        <nav className="main-space-tabs" aria-label="작업 공간">
+          {(['planning', 'dev', 'manage'] as const).map(kind => <button key={kind} aria-pressed={selected?.kind === kind}
+            disabled={!projects.some(project => project.kind === kind)} onClick={() => { const project = projects.find(project => project.kind === kind); if (project) void handleSelect(project.id) }}>{t(kind)}</button>)}
+        </nav>
         {env && <EnvBanner statuses={env} />}
         {message && <div className="banner warn">{typeof message === 'string' ? message : t(message.key)}</div>}
         {provision && (
@@ -339,6 +343,11 @@ export function App() {
             </button>
           </div>
         )}
+        {selected?.exists && <div className="director-guidance">
+          <span>Claude가 대화하며 지시하고 GPT가 수행합니다</span>
+          {selected.kind === 'manage' && <small className="manage-warning">{selected.selfRepository ? '⚠ IDE 저장소를 수정합니다. ' : ''}코드 수정은 빌드 및 IDE 재시작 후 반영됩니다.</small>}
+          {selectedId && activities[selectedId]?.stallSuspected && <p role="alert">멈춘 것으로 의심: GPT 출력이 없습니다. 로그와 승인 대기를 확인하세요.</p>}
+        </div>}
         {main}
       </main>
       {viewerVisible && selected && (

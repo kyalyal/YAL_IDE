@@ -6,7 +6,7 @@ it('exposes only read operations, window opening and events; no mutating functio
   await import('../src/preload/index')
   const api = mocks.expose.mock.calls.find(([name]) => name === 'yalSkills')?.[1] as SkillsApi
   expect(api).toBeDefined()
-  expect(Object.keys(api).sort()).toEqual(['list', 'get', 'history', 'readVersion', 'log', 'syncStatus', 'openWindow', 'onChanged', 'onSyncStatus'].sort())
+  expect(Object.keys(api).sort()).toEqual(['save', 'remove', 'list', 'get', 'history', 'readVersion', 'log', 'syncStatus', 'openWindow', 'onChanged', 'onSyncStatus'].sort())
   await api.list('planning'); expect(mocks.invoke).toHaveBeenLastCalledWith(SKILLS_IPC.list, 'planning')
   await api.get('planning', 'test'); expect(mocks.invoke).toHaveBeenLastCalledWith(SKILLS_IPC.get, 'planning', 'test')
   await api.history('planning', 'test'); expect(mocks.invoke).toHaveBeenLastCalledWith(SKILLS_IPC.history, 'planning', 'test')

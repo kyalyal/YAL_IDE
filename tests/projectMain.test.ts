@@ -13,7 +13,7 @@ const state = vi.hoisted(() => ({
   dialog: vi.fn(), open: vi.fn(async () => ''), send: vi.fn(), owner: {} as object
 }))
 vi.mock('electron', () => ({
-  app: { whenReady: () => ({ then: (fn: () => Promise<void>) => { state.ready = fn } }),
+  app: { getAppPath: () => process.cwd(), whenReady: () => ({ then: (fn: () => Promise<void>) => { state.ready = fn } }),
     getPath: (key: string) => key === 'documents' ? state.documents : state.userData, on: (name: string, fn: () => void) => state.lifecycle.set(name, [...(state.lifecycle.get(name) ?? []), fn]) },
   BrowserWindow: class {
     static getAllWindows() { return [{ isDestroyed: () => false, webContents: { isDestroyed: () => false, send: state.send } }] }
@@ -237,4 +237,30 @@ it('registers planning actions and cleans actual link changes and planning delet
   }
   call(IPC.removeProject, dev.id)
   call(IPC.removeProject, other.id)
+})
+
+it('exposes a fixed isolated editable manage project and validates settings boundaries', () => {
+  const management = call(IPC.listProjects).find((project: { kind: string }) => project.kind === 'manage')
+  expect(management).toMatchObject({ id: 'yal-ide-manage', path: process.cwd(), selfRepository: true })
+  const previous = call(IPC.readMaster)
+  call(IPC.saveMaster, 'manage', '독립 관리 MD')
+  expect(call(IPC.readMaster, 'manage')).toBe('독립 관리 MD')
+  expect(call(IPC.readMaster)).toBe(previous)
+  expect(() => call(IPC.saveMaster, 'dev', '금지')).toThrow()
+  expect(() => call(SETTINGS_IPC.set, { manage: { storagePath: join(state.userData, 'spaces/dev') } })).toThrow()
+  expect(() => call(SETTINGS_IPC.set, { manage: { projectPath: 'relative' } })).toThrow()
+  expect(call(IPC.manageInfo).storagePath).toBe(join(state.userData, 'spaces/manage'))
+})
+
+it('starts the management Claude director with independent sources and no worker PATH', () => {
+  expect(call(IPC.startTerminal, 'yal-ide-manage', 80, 24).ok).toBe(true)
+  const [file, args, rawOptions] = state.spawn.mock.calls.at(-1)!
+  const options = rawOptions as { env: Record<string, string> }
+  expect(file).toBe(process.platform === 'win32' ? 'cmd.exe' : 'claude')
+  if (process.platform === 'win32') expect(args.slice(0, 2)).toEqual(['/c', 'claude'])
+  expect(args).toContain('--append-system-prompt')
+  expect(args.join(' ')).toContain('Claude는 디렉터다')
+  expect(options.env.YAL_MASTER_PATH).toBe(join(state.userData, 'spaces/manage/master/MASTER.md'))
+  expect(options.env.YAL_SKILLS_DIR).toBe(join(state.userData, 'spaces/manage/skills'))
+  expect(options.env.YAL_GPT_WORKER).not.toBe('1')
 })

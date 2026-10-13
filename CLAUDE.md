@@ -7,6 +7,8 @@
 ## 작업 원칙 (가장 중요)
 - Claude는 **오더를 내리고 작업을 지시하는 역할**이다. 작업(제작·수정·확인)은 GPT가 한다. 이 점을 항상 명심한다.
 - Claude는 GPT의 **초안과 중간 결과물을 확인하면서** 방향을 조정하는 오더를 내린다. 최종 결과만 기다리지 않는다.
+- **GPT는 수행자다.** Claude에게 거꾸로 제안·질문하지 않고, 외부 CLI(`codex`/`claude`/`scripts/gpt.sh`)를 다시 호출해 다른 일을 시킬 수 없다(`YAL_GPT_WORKER` 가드와 PATH 차단 shim으로 기술적으로 막는다). Codex 내부 서브에이전트·병렬 워커는 융통성 있게 써도 된다. 결과가 나오면 Claude가 검수하고, 성에 안 차면 Claude가 다시 오더를 내린다.
+- `scripts/gpt.sh`는 `--approve-for-me` 방식을 유지한다(`--sandbox workspace-write`는 Windows에서 read-only로 떨어진다). 실행 시 stdin을 닫아 입력 대기로 멈추지 않게 한다.
 - 확인하고 싶은 부분(앱을 띄워 동작하는지, 버그 재현, 파일 상태 조사 등)이 생기면 **Claude가 직접 하지 않고 GPT에게 시킨다.**
 - **GPT는 화면을 직접 볼 수 없다**(Computer Use는 Electron에 승인되지 않음). 화면을 꼭 봐야 하는 확인은 GPT가 **캡처(스크린샷)를 이미지 파일로 저장**하고, Claude가 그 이미지를 읽어서 판단한다. 캡처는 CDP(`--remote-debugging-port`)나 앱 자체 캡처 기능으로 만든다.
 - Claude가 직접 하는 일은 지시서 작성, GPT 보고·diff·중간 결과 검토, 판단과 결정, 사용자와의 소통이다.

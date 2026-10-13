@@ -180,8 +180,8 @@ export function ProjectList({
   return (
     <aside className="sidebar" style={style}>
       <div className="project-spaces" ref={spaces}
-        style={{ gridTemplateRows: `minmax(64px, ${spaceRatio}fr) 5px minmax(64px, ${1 - spaceRatio}fr)` }}>
-      {(['planning', 'dev'] as const).map(kind => {
+        style={{ gridTemplateRows: `minmax(64px, ${spaceRatio}fr) 5px minmax(64px, ${1 - spaceRatio}fr) minmax(105px, .35fr)` }}>
+      {(['planning', 'dev', 'manage'] as const).map(kind => {
         const orderedProjects = groups[kind]
         const splitIndex = pinnedSplitIndex(orderedProjects)
         return <Fragment key={kind}>
@@ -189,15 +189,16 @@ export function ProjectList({
       <section className={`project-space ${kind}`} aria-label={t(kind)}>
       <div className="sidebar-header">
         <span>{t(kind)}</span>
-        <button ref={node => { addButtons.current[kind] = node }} className="icon-btn"
+        {kind !== 'manage' && <button ref={node => { addButtons.current[kind] = node }} className="icon-btn"
           title={t(kind === 'planning' ? 'addPlanningProject' : 'addDevProject')}
           aria-label={t(kind === 'planning' ? 'addPlanningProject' : 'addDevProject')}
           aria-expanded={menuOpen === kind} aria-controls={`project-add-menu-${kind}`} disabled={busy || formOpen === kind}
           onClick={() => { focusKind.current = kind; setMenuOpen(open => open === kind ? null : kind) }}>
           +
-        </button>
+        </button>}
       </div>
       <div className="project-space-scroll">
+      {kind === 'manage' && <small className="manage-hint">연결·규칙 경로는 설정에서 변경합니다.</small>}
       {menuOpen === kind && <div id={`project-add-menu-${kind}`} ref={menu} className="project-add-menu"
         onKeyDown={event => { if (event.key === 'Escape') { setMenuOpen(null); addButtons.current[focusKind.current]?.focus() } }}>
         <button onClick={() => { setMenuOpen(null); setFormOpen(kind); setName(''); setRoot(''); setError('') }}>{t(kind === 'planning' ? 'newPlanningProject' : 'newProject')}</button>
@@ -242,6 +243,7 @@ export function ProjectList({
             />
             <div className="project-identity">
               <span className="project-name">{p.name}</span>
+              {p.selfRepository && <small className="manage-warning">⚠ IDE 저장소</small>}
               {kind === 'dev' && p.id === selectedId ? <select className="planning-link" aria-label={t('planningLink')}
                 value={p.linkedPlanningId ?? ''} onClick={event => event.stopPropagation()}
                 onChange={event => { void onLinkedPlanning(p.id, event.target.value || null).catch(() => setError(t('projectActionError'))) }}>
@@ -256,11 +258,12 @@ export function ProjectList({
             {!p.exists && <span className="badge-missing">{t('missingPath')}</span>}
             <button className={'icon-btn pin' + (p.pinned ? ' pinned' : '')}
               title={t(pinLabel(p.pinned))} aria-label={t(pinLabel(p.pinned))} aria-pressed={p.pinned === true}
-              disabled={pinning.includes(p.id)}
+              disabled={kind === 'manage' || pinning.includes(p.id)}
               onClick={event => { event.stopPropagation(); void togglePin(p) }}>
               <span aria-hidden="true">📌</span>
             </button>
             <button
+              disabled={kind === 'manage'}
               className="icon-btn remove"
               title={t('removeProject')}
               aria-label={t('removeProject')}

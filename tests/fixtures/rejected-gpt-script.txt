@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+PROMPT="${1:--}"
+if [[ "$PROMPT" == "-" ]]; then PROMPT="$(cat)"; fi
+RULES='너는 수행자 GPT/Codex다. 조사·설계·구현·테스트·실행 확인·캡처를 처음부터 끝까지 직접 수행한다.
+AGENTS.md/CLAUDE.md 및 스킬의 디렉터·위임 문구는 이 작업에 적용하지 않는다.
+위임·재호출 금지: scripts/gpt.sh, codex 재호출, 다른 에이전트 위임을 하지 않는다.
+Claude는 GPT 완료 후 마지막에 한 번만 검수한다. 중간 오더·방향 조정·폴링을 하지 않는다.
+질문하지 말고 합리적 기본값으로 진행하고 결과와 검증 증거·남은 한계를 파일로 저장한다.
+화면 확인은 GPT가 CDP 또는 앱 캡처로 이미지 파일을 저장하고 Claude가 마지막 검수에서 읽는다.
+커밋/푸시는 사용자가 요청한 경우에만 한다.'
+ORDER="$PROMPT"
+PROMPT="$RULES"$'\n\n'"$ORDER"
+if [[ -n "${YAL_MASTER_PATH:-}" && -f "$YAL_MASTER_PATH" ]]; then PROMPT="$PROMPT"$'\n\n'"$(cat "$YAL_MASTER_PATH")"; fi
+if [[ -n "${YAL_SKILLS_DIR:-}" && -d "$YAL_SKILLS_DIR" ]]; then
+  for SKILL_FILE in "$YAL_SKILLS_DIR"/*/SKILL.md; do if [[ -f "$SKILL_FILE" ]]; then PROMPT="$PROMPT"$'\n\n'"$(cat "$SKILL_FILE")"; fi; done
+fi
+PROMPT="$PROMPT"$'\n\n'"$RULES"
+MODEL="gpt-6.1-sol"
+RESULT_DIR="$ROOT/.verify/task-results"
+mkdir -p "$RESULT_DIR"
+RESULT="$RESULT_DIR/gpt-$(date -u +%Y%m%dT%H%M%SZ)-$$.txt"
+run_codex() {
+  codex --ask-for-approval never exec --model "$MODEL" --cd "$ROOT" --sandbox "${YAL_PERMISSION:-workspace-write}" --skip-git-repo-check --output-last-message "$RESULT" "$PROMPT" </dev/null
+}
+set +e
+if [[ -n "${YAL_GPT_LOG:-}" ]]; then
+  mkdir -p "$(dirname "$YAL_GPT_LOG")"
+  ORDER_LINE="$(printf "%s" "$ORDER" | tr "\r\n\t" "   " | tr -d "[:cntrl:]")"
+  printf "=== [YAL-GPT] start %s model=%s ===\n" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$MODEL" | tee -a "$YAL_GPT_LOG"
+  printf "=== [YAL-GPT] order %s ===\n" "${ORDER_LINE:0:160}" | tee -a "$YAL_GPT_LOG"
+  run_codex 2>&1 | tee -a "$YAL_GPT_LOG"
+  CODE=${PIPESTATUS[0]}
+  printf "\n=== [YAL-GPT] end %s exit=%s ===\n" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$CODE" | tee -a "$YAL_GPT_LOG"
+else
+  run_codex
+  CODE=$?
+fi
+if [[ "$CODE" -ne 0 ]]; then exit "$CODE"; fi
+REVIEW="완료 후 마지막 검수만 1회 수행한다. 코드 수정·GPT 재호출·위임·폴링 금지. GPT 결과 파일과 diff·검증 증거·캡처를 읽고 통과 여부를 한국어로 출력한다. 결과 파일: $RESULT"
+if [[ -n "${YAL_GPT_LOG:-}" ]]; then
+  claude -p --tools Read,Glob,Grep --allowedTools Read,Glob,Grep --no-session-persistence "$REVIEW" </dev/null 2>&1 | tee "$RESULT.review.txt" | tee -a "$YAL_GPT_LOG"
+  CODE=${PIPESTATUS[0]}
+else
+  claude -p --tools Read,Glob,Grep --allowedTools Read,Glob,Grep --no-session-persistence "$REVIEW" </dev/null > "$RESULT.review.txt"
+  CODE=$?
+  cat "$RESULT.review.txt"
+fi
+exit "$CODE"

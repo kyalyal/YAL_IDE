@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import { SOUND_CATALOG, type AppSettings, type AppSettingsPatch, type SoundId } from '../../../shared/settings'
 import type { MessageKey } from '../../../shared/i18n'
 import { useI18n } from '../i18n/I18nProvider'
+import type { ProjectView } from '../../../shared/types'
+import { ManagementSettings } from './ManagementSettings'
 import { playSound } from '../sound/soundEngine'
 
 export function SettingsWindow() {
@@ -9,6 +11,12 @@ export function SettingsWindow() {
   const [settings, setSettings] = useState<AppSettings | null>(null)
   const [error, setError] = useState<MessageKey | null>(null)
   const [root, setRoot] = useState('')
+  const [projects, setProjects] = useState<ProjectView[]>([])
+  useEffect(() => {
+    let active = true
+    void window.yal.listProjects().then(next => { if (active) setProjects(next) }).catch(() => setError('settingsLoadError'))
+    return () => { active = false }
+  }, [settings?.manage?.projectPath])
   const version = useRef(0)
   const pending = useRef(0)
 
@@ -45,7 +53,7 @@ export function SettingsWindow() {
     pending.current++
     setError(null)
     setSettings((current) => current ? {
-      ...current, ...patch, sound: { ...current.sound, ...patch.sound }
+      ...current, ...patch, permissions: { ...current.permissions, ...patch.permissions }, manage: { projectPath: current.manage?.projectPath ?? null, storagePath: current.manage?.storagePath ?? null, ...patch.manage }, sound: { ...current.sound, ...patch.sound }
     } : current)
     // Send every edit immediately; older replies cannot replace the latest local edit.
     try {
@@ -90,6 +98,23 @@ export function SettingsWindow() {
           <button disabled={!root} onClick={() => void window.yal.openProjectsRoot().catch(() => setError('projectActionError'))}>{t('openFolder')}</button>
         </div>
       </section>
+      {settings && <section aria-labelledby="permission-heading">
+        <h2 id="permission-heading">프로젝트 권한</h2>
+        <p>Claude가 대화하며 지시하고 GPT가 수행합니다</p>
+        {projects.map(project => <label className="settings-toggle" key={project.id}>
+          <span>{project.name}</span>
+          <select aria-label={`${project.name} 프로젝트 권한`} value={settings.permissions?.[project.id] ?? 'workspace-write'}
+            onChange={event => void update({ permissions: { [project.id]: event.target.value as 'read-only' | 'workspace-write' } })}>
+            <option value="workspace-write">프로젝트 편집</option><option value="read-only">읽기 전용</option>
+          </select>
+        </label>)}
+        <small>변경한 권한은 새 Claude 터미널부터 적용됩니다. 읽기 전용은 GPT 지시 규칙이며 파일 접근을 강제 제한하지 않습니다.</small>
+        <label className="settings-toggle"><span>GPT 출력 없음 감시 (분)</span>
+          <input aria-label="GPT 출력 없음 감시 (분)" type="number" min="1" max="1440" value={settings.stallMinutes ?? 10}
+            onChange={event => { const value = Number(event.target.value); if (Number.isFinite(value) && value >= 1) void update({ stallMinutes: value }) }} />
+        </label>
+      </section>}
+      {settings && <ManagementSettings settings={settings} update={update} />}
       {!sound ? <p role="status">{t('settingsLoading')}</p> : (
         <section aria-labelledby="sound-heading">
           <h2 id="sound-heading">{t('notificationSound')}</h2>

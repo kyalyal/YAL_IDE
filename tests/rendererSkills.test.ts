@@ -5,7 +5,7 @@ import { act, createElement, mount, click, button, change, deferred } from './re
 import { filterSkillLog, selectSkill, loadSkillLogPage, syncStatusLine } from '../src/renderer/src/skillsState'
 import { MESSAGES, translate } from '../src/shared/i18n'
 import type { SkillLogEntry, SkillSpaceSyncStatus } from '../src/shared/skills'
-const never = (space: 'planning' | 'dev'): SkillSpaceSyncStatus => ({ space, lastSyncAt: null, state: 'never', skills: 0, projects: { total: 0, applied: 0, failed: 0 }, conflicts: [], failures: [] })
+const never = (space: 'planning' | 'dev' | 'manage'): SkillSpaceSyncStatus => ({ space, lastSyncAt: null, state: 'never', skills: 0, projects: { total: 0, applied: 0, failed: 0 }, conflicts: [], failures: [] })
 const skillView = (name: string) => ({ name, description: name, content: `${name} content`, version: 1, createdAt: '', updatedAt: '2026-10-12', author: 'gpt', appliedProjects: 1 })
 beforeEach(() => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
@@ -134,4 +134,25 @@ it('filters the main log by skill and action and sorts newest first without chan
   expect(filterSkillLog(entries, 'a', 'update')).toEqual([entries[2]])
   expect(filterSkillLog(entries, '', '')[0]).toBe(entries[2])
   expect(entries[0].action).toBe('create')
+})
+
+it('edits independent management master and skills and restores read-only shared views', async () => {
+  window.yal.saveMaster = vi.fn().mockResolvedValue(undefined)
+  window.yalSkills.save = vi.fn().mockResolvedValue({ changed: true, action: 'update', version: 2 })
+  window.yalSkills.remove = vi.fn().mockResolvedValue({ changed: true, action: 'remove', version: 2 })
+  const ui = await mount(createElement(SkillsWindow))
+  try {
+    await click(button(ui.host, 'YAL_IDE 관리'))
+    expect(window.yal.readMaster).toHaveBeenLastCalledWith('manage')
+    expect(ui.host.querySelector('[aria-label="관리 마스터 MD 편집"]')).not.toBeNull()
+    await click(button(ui.host, '관리 MD 저장'))
+    expect(window.yal.saveMaster).toHaveBeenCalledWith('manage', 'MASTER content')
+    await click(button(ui.host, '관리 스킬 저장'))
+    expect(window.yalSkills.save).toHaveBeenCalledWith('manage', 'manage-skill', 'manage-skill content')
+    await click(button(ui.host, '관리 스킬 삭제'))
+    expect(window.yalSkills.remove).toHaveBeenCalledWith('manage', 'manage-skill')
+    await click(button(ui.host, '기획'))
+    expect(ui.host.querySelector('[aria-label="관리 마스터 MD 편집"]')).toBeNull()
+    expect(ui.host.textContent).toContain('MASTER content')
+  } finally { await ui.close() }
 })

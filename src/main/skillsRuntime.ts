@@ -21,11 +21,12 @@ export function initialSyncStatus(): SkillSyncStatus {
   return { lastSyncAt: null, state: 'never', skills: 0, projects: { total: 0, applied: 0, failed: 0 }, conflicts: [], failures: [] }
 }
 
-export function startSkillsSystem(userData: string, projects: () => { path: string; kind: ProjectKind }[], mainWindow: () => BrowserWindow | null, language: () => Lang) {
+export function startSkillsSystem(userData: string, projects: () => { path: string; kind: ProjectKind }[], mainWindow: () => BrowserWindow | null, language: () => Lang, manageStore?: SkillStore) {
   migrateLegacySkills(userData)
   const toolPath = installSkillTool(userData)
-  const spaces: SkillSpace[] = ['planning', 'dev']
+  const spaces: SkillSpace[] = ['planning', 'dev', 'manage']
   const stores: Record<SkillSpace, SkillStore> = {
+    manage: manageStore ?? new SkillStore(spaceDir(userData, 'manage')),
     planning: new SkillStore(spaceDir(userData, 'planning')),
     dev: new SkillStore(spaceDir(userData, 'dev'))
   }
@@ -41,8 +42,8 @@ export function startSkillsSystem(userData: string, projects: () => { path: stri
   const runtimes = spaces.map(space => {
     const store = stores[space]
     const builtinErrors = installBuiltins(store, BUILTIN_SKILLS[space])
-    const sync = new SkillSync(store)
-    const ownProjects = () => projects().filter(project => project.kind === space)
+    const sync = new SkillSync(store, { preserveModified: space === 'planning' })
+    const ownProjects = () => space === 'manage' ? [] : projects().filter(project => project.kind === space)
     let syncStatus: SkillSpaceSyncStatus = { ...initialSyncStatus(), space }
     let timer: ReturnType<typeof setTimeout> | undefined
     let watcher: FSWatcher | undefined
@@ -87,6 +88,18 @@ export function startSkillsSystem(userData: string, projects: () => { path: stri
     if (!runtime) throw new Error('Invalid skill space')
     return runtime
   }
+  ipcMain.handle(SKILLS_IPC.save, (_event, space: SkillSpace, name: string, content: string) => {
+    if (space !== 'manage') throw new Error('기획/개발 스킬은 이 편집기로 변경할 수 없습니다.')
+    const result = forSpace(space).store.apply({ name, content, author: 'user', summary: '관리 창 편집' })
+    forSpace(space).resync()
+    return result
+  })
+  ipcMain.handle(SKILLS_IPC.remove, (_event, space: SkillSpace, name: string) => {
+    if (space !== 'manage') throw new Error('기획/개발 스킬은 이 편집기로 변경할 수 없습니다.')
+    const result = forSpace(space).store.remove({ name, author: 'user', summary: '관리 창 삭제' })
+    forSpace(space).resync()
+    return result
+  })
   ipcMain.handle(SKILLS_IPC.list, (_event, space: SkillSpace) => {
     const { store, sync, ownProjects } = forSpace(space)
     return store.list().map(skill => ({ ...skill, appliedProjects: sync.appliedProjects(skill, ownProjects()) }))

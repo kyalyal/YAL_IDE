@@ -12,6 +12,9 @@ export const SOUND_CATALOG = [
 export type SoundId = typeof SOUND_CATALOG[number]['id']
 
 export interface AppSettings {
+  manage?: { projectPath: string | null; storagePath: string | null }
+  permissions?: Record<string, 'read-only' | 'workspace-write'>
+  stallMinutes?: number
   projectsRoot: string | null
   language: Lang
   sound: {
@@ -22,9 +25,12 @@ export interface AppSettings {
   }
 }
 
-export type AppSettingsPatch = { sound?: Partial<AppSettings['sound']>; language?: Lang; projectsRoot?: string | null }
+export type AppSettingsPatch = { stallMinutes?: number; manage?: Partial<NonNullable<AppSettings['manage']>>; permissions?: AppSettings['permissions']; sound?: Partial<AppSettings['sound']>; language?: Lang; projectsRoot?: string | null }
 
 export const DEFAULT_APP_SETTINGS: AppSettings = {
+  manage: { projectPath: null, storagePath: null },
+  permissions: {},
+  stallMinutes: 10,
   projectsRoot: null,
   language: 'ko',
   sound: { enabled: true, soundId: 'chime', volume: 0.6, alsoOnAttention: true }

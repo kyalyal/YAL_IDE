@@ -12,7 +12,7 @@ const state = vi.hoisted(() => ({
   send: vi.fn(), dialog: vi.fn(), spawn: vi.fn((_file: string, _args: string[], _options: unknown) => ({ onData() {}, onExit() {}, write() {}, resize() {}, kill() {} }))
 }))
 vi.mock('electron', () => ({
-  app: { whenReady: () => ({ then: (fn: () => Promise<void>) => { state.ready = fn } }), getPath: () => state.userData,
+  app: { getAppPath: () => process.cwd(), whenReady: () => ({ then: (fn: () => Promise<void>) => { state.ready = fn } }), getPath: () => state.userData,
     on: (name: string, fn: () => void) => state.lifecycle.set(name, fn), quit() {} },
   BrowserWindow: class {
     static getAllWindows() { return [] }
@@ -65,14 +65,14 @@ it('upgrades startup/add projects, passes pty log paths, streams, clears, valida
   const activity = call(IPC.projectActivity)
   expect(clock).toHaveBeenCalledTimes(1)
   clock.mockRestore()
-  expect(activity).toEqual({ p: { status: 'done', lastActivityAt: 123, gptRunning: true, gptSince: since } })
-  expect(call(IPC.projectStatuses)).toEqual({ p: 'done' })
+  expect(activity).toMatchObject({ p: { status: 'done', lastActivityAt: 123, gptRunning: true, gptSince: since } })
+  expect(call(IPC.projectStatuses)).toMatchObject({ p: 'done' })
   utimesSync(log, new Date(now - 30 * 60_000 - 10), new Date(now - 30 * 60_000 - 10))
   expect(call(IPC.projectActivity).p.gptRunning).toBe(false)
   call(GPT_LOG_IPC.clear, 'p');
-  expect(call(IPC.projectActivity).p).toEqual({ status: 'done', lastActivityAt: 123, gptRunning: false, gptSince: null })
+  expect(call(IPC.projectActivity).p).toEqual({ status: 'done', lastActivityAt: 123, gptRunning: false, gptSince: null, stallSuspected: false })
   rmSync(join(state.userData, 'status/p.json'))
-  expect(call(IPC.projectActivity).p).toEqual({ status: 'idle', lastActivityAt: 0, gptRunning: false, gptSince: null })
+  expect(call(IPC.projectActivity).p).toEqual({ status: 'idle', lastActivityAt: 0, gptRunning: false, gptSince: null, stallSuspected: false })
   expect(readFileSync(log, 'utf8')).toBe('')
   expect(state.send).toHaveBeenCalledWith(GPT_LOG_IPC.append, expect.objectContaining({ reset: true, chunk: '' }))
   const addedPath = join(root, 'added'); mkdirSync(join(addedPath, 'scripts'), { recursive: true })

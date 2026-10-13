@@ -103,3 +103,26 @@ describe('AppSettingsStore', () => {
     expect(readFileSync(join(dirs.at(-1)!, backup), 'utf8')).toBe(data)
   })
 })
+
+it('persists independent management paths and merges per-project permissions without sharing returned state', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'yal-manage-settings-')); dirs.push(directory)
+  const path = join(directory, 'settings.json'), store = new AppSettingsStore(path)
+  const management = join(directory, 'management')
+  store.update({ manage: { projectPath: management }, permissions: { one: 'read-only' } })
+  store.update({ manage: { storagePath: join(management, 'rules') }, permissions: { two: 'workspace-write' } })
+  const next = store.get()
+  expect(next.manage).toEqual({ projectPath: management, storagePath: join(management, 'rules') })
+  expect(next.permissions).toEqual({ one: 'read-only', two: 'workspace-write' })
+  next.manage!.projectPath = null; next.permissions!.one = 'workspace-write'
+  expect(new AppSettingsStore(path).get().permissions!.one).toBe('read-only')
+  expect(store.get().manage!.projectPath).toBe(management)
+})
+
+it('normalizes and persists the configurable stall threshold', () => {
+  const path = file(); const store = new AppSettingsStore(path)
+  expect(store.get().stallMinutes).toBe(10)
+  expect(store.update({ stallMinutes: 2 }).stallMinutes).toBe(2)
+  expect(new AppSettingsStore(path).get().stallMinutes).toBe(2)
+  expect(store.update({ stallMinutes: 0 }).stallMinutes).toBe(1)
+  expect(store.update({ stallMinutes: Infinity }).stallMinutes).toBe(10)
+})

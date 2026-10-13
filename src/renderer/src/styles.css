@@ -256,3 +256,18 @@ code { background: #333; padding: 1px 4px; border-radius: 3px; }
 .sidebar-dragging, .space-dragging { user-select: none; }
 .app.sidebar-dragging *, .app.space-dragging * { user-select: none; }
 .app.sidebar-dragging iframe, .app.space-dragging iframe, .app.viewer-dragging iframe { pointer-events: none; }
+
+.manage-warning { color: #e9b86c; font-size: 12px; }
+.manage-hint { display: block; padding: 8px 12px; color: #aaa; }
+.management-settings label { display: block; margin: 12px 0; }
+.management-settings input { display: block; width: 100%; padding: 8px; margin-top: 6px; }
+.management-settings button { margin-right: 8px; }
+
+.main-space-tabs { display: flex; gap: 4px; padding: 8px 12px; border-bottom: 1px solid #444; }
+.main-space-tabs button[aria-pressed="true"] { background: #415369; color: white; }
+
+.main-space-tabs button { background: #333337; border: 1px solid #4b4b4b; color: var(--fg); border-radius: 3px; padding: 4px 8px; font: inherit; }
+
+.director-guidance { padding: 6px 14px; font-size: 12px; color: #aaa; flex-shrink: 0; border-bottom: 1px solid #3c3c3c; }
+.director-guidance small { display: block; margin-top: 4px; }
+.director-guidance [role="alert"] { color: #e9b86c; margin: 4px 0; }

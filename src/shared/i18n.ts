@@ -3,7 +3,7 @@ export type Lang = 'ko' | 'en'
 export type MessageKey =
   | 'planningChanged' | 'planningListChanged' | 'planningNoBaseline' | 'planningClean' | 'planningPending' | 'planningApply' | 'planningApplyFull' | 'planningMarkSynced' | 'planningSetBaseline' | 'planningBusy' | 'planningTerminalOff' | 'planningNoChanges' | 'planningFileConflict'
   | 'activityWaitingGpt' | 'activityQuiet' | 'activityNeedsInput' | 'activitySeconds' | 'activityMinutes' | 'activityDeferred' | 'activityElapsed'
-  | 'planning' | 'dev' | 'newPlanningProject' | 'planningLink' | 'noPlanningLink' | 'masterMd' | 'openFile' | 'skillSpace'
+  | 'manage' | 'planning' | 'dev' | 'newPlanningProject' | 'planningLink' | 'noPlanningLink' | 'masterMd' | 'openFile' | 'skillSpace'
   | 'addPlanningProject' | 'addDevProject' | 'masterError'
   | 'gptLogTitle' | 'gptRunning' | 'gptSuccess' | 'gptFailed' | 'gptWaiting' | 'gptStalled'
   | 'gptLogEmpty' | 'gptCopy' | 'gptCollapse' | 'gptExpand' | 'gptHeight' | 'gptExitCode'
@@ -111,7 +111,7 @@ export const MESSAGES: Record<Lang, Record<MessageKey, string>> = {
     setupIos2: '터미널에서 xcode-select --install을 실행하세요.',
     setupIos3: '공식 CocoaPods 가이드(guides.cocoapods.org)를 따라 CocoaPods를 설치하세요.',
 
-    planning: '기획', dev: '개발', newPlanningProject: '새 기획 프로젝트', planningLink: '기획 링크',
+    manage: 'YAL_IDE 관리', planning: '기획', dev: '개발', newPlanningProject: '새 기획 프로젝트', planningLink: '기획 링크',
     noPlanningLink: '링크 없음', masterMd: '총괄 MD', openFile: '파일 열기', skillSpace: '스킬 공간',
     addPlanningProject: '기획 프로젝트 추가', addDevProject: '개발 프로젝트 추가', masterError: '총괄 MD를 읽거나 열 수 없습니다.',
     newProject: '새 프로젝트 만들기', existingFolder: '기존 폴더 추가', projectName: '프로젝트 이름',
@@ -255,7 +255,7 @@ export const MESSAGES: Record<Lang, Record<MessageKey, string>> = {
     setupIos2: 'Run xcode-select --install in a terminal.',
     setupIos3: 'Install CocoaPods following the official guide at guides.cocoapods.org.',
 
-    planning: 'Planning', dev: 'Development', newPlanningProject: 'New planning project', planningLink: 'Planning link',
+    manage: 'YAL_IDE 관리', planning: 'Planning', dev: 'Development', newPlanningProject: 'New planning project', planningLink: 'Planning link',
     noPlanningLink: 'No link', masterMd: 'Master MD', openFile: 'Open file', skillSpace: 'Skill space',
     addPlanningProject: 'Add planning project', addDevProject: 'Add development project', masterError: 'Unable to read or open the master MD.',
     newProject: 'Create new project', existingFolder: 'Add existing folder', projectName: 'Project name',

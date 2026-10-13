@@ -13,7 +13,7 @@ const state = vi.hoisted(() => ({
 }))
 vi.mock('node:os', async original => ({ ...await original<typeof import('node:os')>(), homedir: () => state.userData }))
 vi.mock('electron', () => ({
-  app: { whenReady: () => ({ then: (fn: () => Promise<void>) => { state.ready = fn } }), getPath: () => state.userData, on: (event: string, fn: () => void) => state.lifecycle.set(event, fn), quit: vi.fn() },
+  app: { getAppPath: () => process.cwd(), whenReady: () => ({ then: (fn: () => Promise<void>) => { state.ready = fn } }), getPath: () => state.userData, on: (event: string, fn: () => void) => state.lifecycle.set(event, fn), quit: vi.fn() },
   BrowserWindow: class {
     static getAllWindows() { return [] }
     webContents = { on: vi.fn(), send: state.send, isDestroyed: () => false }

@@ -26,7 +26,7 @@ it('renders planning above dev, and each menu adds and creates in its own kind',
   const ui = await mount(createElement(ProjectList, callbacks))
   try {
     const sections = [...ui.host.querySelectorAll('section')]
-    expect(sections.map(section => section.getAttribute('aria-label'))).toEqual(['기획', '개발'])
+    expect(sections.map(section => section.getAttribute('aria-label'))).toEqual(['기획', '개발', 'YAL_IDE 관리'])
     expect(sections[0].textContent).toContain('plan')
     expect(sections[0].textContent).not.toContain('game')
     for (const [index, kind] of ['planning', 'dev'].entries()) {
@@ -115,7 +115,7 @@ describe('project list presentation', () => {
     expect(result.planning.map(p => p.id)).toEqual(['p2', 'p3', 'p1'])
     expect(result.dev.map(p => p.id)).toEqual(['d2', 'd1', 'd3'])
     expect(projects.map(p => p.id)).toEqual(['d1', 'p1', 'd2', 'p2', 'p3', 'd3'])
-    expect(splitByKind([])).toEqual({ planning: [], dev: [] })
+    expect(splitByKind([])).toEqual({ planning: [], dev: [], manage: [] })
   })
   it('places a separator only between nonempty pinned and unpinned groups', () => {
     expect(pinnedSplitIndex(orderProjects([{ pinned: false }, { pinned: true }, { pinned: true }]))).toBe(2)
